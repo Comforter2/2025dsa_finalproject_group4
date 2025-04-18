@@ -147,6 +147,71 @@ The team that gets the highest **R2** will receive an award and bragging rights.
 
 ## ------------------------------------------------------------------------
 
-# Final Project Code
+# Final-Project Codes
 
 ------------------------------------------------------------------------
+
+## Prepare required libraries
+
+```{r}
+#| message: false
+#| warning: false
+
+#Loading necessary libraries
+
+# --- Data Import and Basic Handling ---
+library(readr)        # For reading CSV and delimited text files
+library(janitor)      # For cleaning column names, removing empty rows/columns
+
+# --- Data Wrangling & Cleaning ---
+library(dplyr)        # Data manipulation (filter, mutate, group_by, etc.)
+library(tidyr)        # Data tidying (pivoting, reshaping)
+library(lubridate)    # Date/time manipulation
+
+# --- Visualization ---
+library(ggplot2)      # Core plotting
+library(ggthemes)     # Extra themes for ggplot2
+library(ggpubr)       # Publication-ready plots
+library(cowplot)      # Combining multiple ggplots
+library(corrplot)     # Correlation matrix visualization
+library(GGally)       # Pairwise plots (ggpairs)
+
+# --- Machine Learning Framework ---
+library(tidymodels)   # Unified framework for preprocessing, modeling, tuning, and evaluation
+
+# --- Modeling Engines ---
+library(xgboost)      # XGBoost implementation
+library(ranger)       # Fast Random Forests (optional alternative for comparison)
+
+# --- Feature Engineering ---
+library(recipes)      # Included in tidymodels, but useful to load for step-by-step prep
+library(textrecipes)  # If you're working with text data
+
+# --- Model Tuning & Validation ---
+library(finetune)     # Advanced hyperparameter tuning strategies (racing, ANOVA, etc.)
+library(tune)         # For grid/random tuning workflows
+library(rsample)      # Data splitting (train/test, cross-validation)
+
+# --- Metrics and Evaluation ---
+library(yardstick)    # Evaluation metrics (RMSE, R², MAE, etc.)
+library(vip)          # Variable importance plots
+library(pROC)         # ROC and AUC curves for classification (if needed)
+
+# --- Parallel Processing ---
+library(doParallel)   # Enable parallel computation to speed up tuning/resampling
+
+# --- Utilities & Diagnostics ---
+library(car)          # Variance inflation factors, etc.
+library (skimr)         # For a quick skim/summary of the data
+library(DataExplorer) # For automated EDA
+
+```
+
+##Loading data
+
+```{r}
+corn_data = read_csv("")
+```
+
+
+
