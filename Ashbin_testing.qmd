@@ -1,0 +1,355 @@
+---
+title: "Ashbin"
+format: html
+editor: visual
+---
+
+#Loading libraries
+
+```{r}
+#Loading necessary libraries
+
+# --- Data Import and Basic Handling ---
+library(readr)        # For reading CSV and delimited text files
+library(janitor)      # For cleaning column names, removing empty rows/columns
+library(naniar)       # Handling missing data
+
+# --- Data Wrangling & Cleaning ---
+library(dplyr)        # Data manipulation (filter, mutate, group_by, etc.)
+library(tidyr)        # Data tidying (pivoting, reshaping)
+library(lubridate)    # Date/time manipulation
+library(tidyverse)    # Collection of packages for data science
+
+
+# --- Visualization ---
+library(ggplot2)      # Core plotting
+library(ggthemes)     # Extra themes for ggplot2
+library(ggpubr)       # Publication-ready plots
+library(cowplot)      # Combining multiple ggplots
+library(corrplot)     # Correlation matrix visualization
+library(GGally)       # Pairwise plots (ggpairs)
+
+# --- Machine Learning Framework ---
+library(tidymodels)   # Modeling and machine learning
+
+# --- Modeling Engines ---
+library(xgboost)      # XGBoost implementation
+library(ranger)       # Fast Random Forests (optional alternative for comparison)
+
+# --- Feature Engineering ---
+library(recipes)      # Included in tidymodels, but useful to load for step-by-step prep
+library(textrecipes)  # If you're working with text data
+
+# --- Model Tuning & Validation ---
+library(finetune)     # Advanced hyperparameter tuning strategies (racing, ANOVA, etc.)
+library(tune)         # For grid/random tuning workflows
+library(rsample)      # Data splitting (train/test, cross-validation)
+
+# --- Metrics and Evaluation ---
+library(yardstick)    # Evaluation metrics (RMSE, R², MAE, etc.)
+library(vip)          # Variable importance plots
+library(pROC)         # ROC and AUC curves for classification (if needed)
+
+# --- Parallel Processing ---
+library(doParallel)   # Enable parallel computation to speed up tuning/resampling
+library(future)
+
+# --- Utilities & Diagnostics ---
+library(car)          # Variance inflation factors, etc.
+library (skimr)         # For a quick skim/summary of the data
+library(DataExplorer) # For EDA
+```
+
+# Preparation before coding
+
+```{r}
+# Parallel plan: use all but one core
+plan(multisession, workers = parallel::detectCores() - 1)
+set.seed(1996)
+
+# Verify NVIDIA GPU via system call (Windows)
+gpu_info <- try(system("nvidia-smi -L", intern = TRUE), silent = TRUE)
+if (inherits(gpu_info, "try-error") || length(gpu_info) == 0) {
+  warning("Cannot detect NVIDIA GPU via nvidia-smi. Check CUDA/drivers.")
+} else {
+  cat("Detected GPUs:\n", paste(gpu_info, collapse = "\n"), "\n")
+}
+```
+
+------------------------------------------------------------------------
+
+```{r 1.Import & merge}
+# Raw files
+t_meta = read_csv("data/training/training_meta.csv")
+t_traits   = read_csv("data/training/training_trait.csv")
+t_soil   = read_csv("data/training/training_soil.csv")
+
+# Clean meta & soil
+meta <- t_meta %>% distinct(year, site, .keep_all = TRUE)
+soil <- t_soil %>% mutate(site = sub("_\\d+$", "", site))
+
+# Merge
+raw_data <- t_traits %>%
+  left_join(meta, by = c("year", "site")) %>%
+  left_join(soil, by = c("year", "site")) %>%
+  filter(!is.na(longitude), !is.na(latitude))
+
+#view(raw_data)
+
+```
+
+
+```{r 2.EDA}
+glimpse(raw_data)
+summary(raw_data)
+gg_miss_var(raw_data) + labs(title = "Missing values per variable")
+
+```
+
+```{r 3.Feature engineering}
+data_feat = raw_data %>%
+  mutate(
+    date_planted    = mdy(date_planted),
+    date_harvested  = mdy(date_harvested),
+    days_to_harvest = as.numeric(date_harvested - date_planted)
+  ) %>%
+  select(-date_planted, -date_harvested)
+
+view(data_feat)
+
+```
+
+
+```{r 4.Select ML predictors}
+ml_data <- data_feat %>%
+  select(-year, -site, -replicate, -block, -hybrid, -previous_crop)
+
+
+view(ml_data)
+```
+
+
+```{r 5 Handle missing values}
+# A) Drop all rows with any NA
+#ml_data_clean = ml_data %>% drop_na()
+
+#B) Median/mode imputation to prevent data loss
+num_vars <- ml_data %>% select(where(is.numeric)) %>% names()
+cat_vars <- ml_data %>% select(where(~ !is.numeric(.))) %>% names()
+get_mode <- function(x) { ux <- unique(x); ux[which.max(tabulate(match(x, ux)))] }
+ml_data_clean <- ml_data %>%
+mutate(across(all_of(num_vars), ~ if_else(is.na(.), median(., na.rm=TRUE), .))) %>%
+mutate(across(all_of(cat_vars), ~ if_else(is.na(.), get_mode(.), .)))
+
+view(ml_data_clean)
+```
+
+
+```{r 6.Train/Test split}
+split_obj  <- initial_split(ml_data_clean, prop = 0.8, strata = yield_mg_ha)
+train_data <- training(split_obj)
+test_data  <- testing(split_obj)
+
+```
+
+
+```{r 7.Preprocessing recipe}
+rec <- recipe(yield_mg_ha ~ ., data = train_data) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+```
+
+
+```{r 8.XGBoost Specification}
+xgb_spec <- boost_tree(
+  trees          = tune(),
+  tree_depth     = tune(),
+  learn_rate     = tune(),
+  loss_reduction = tune(),
+  sample_size    = tune(),
+  mtry           = tune()
+) %>%
+  set_engine(
+    "xgboost",
+    tree_method = "gpu_hist",
+    predictor   = "gpu_predictor",
+    gpu_id      = 0,
+    nthread     = parallel::detectCores() - 1
+  ) %>%
+  set_mode("regression")
+
+```
+
+
+```{r 9.Tuning grid & resamples}
+# for reproducibility
+set.seed(1996)
+
+
+# Re-sampling
+#──────────────────────────────────────────────────────────────────────────────
+folds   <- vfold_cv(train_data, v = 5, strata = yield_mg_ha)
+
+# Parameter space 
+#──────────────────────────────────────────────────────────────────────────────
+xgb_params <- parameters(xgb_spec) %>%
+  update(
+    trees          = trees(c(500, 2000)),
+    tree_depth     = tree_depth(c(3, 10)),
+    learn_rate     = learn_rate(c(0.001, 0.3)),
+    loss_reduction = loss_reduction(c(0, 10)),
+    sample_size    = sample_prop(c(0.5, 1)),
+    mtry           = mtry(c(5, 50))
+  )
+
+xgb_grid <- grid_latin_hypercube(xgb_params, size = 100)
+
+
+# Workflow
+#──────────────────────────────────────────────────────────────────────────────
+xgb_wf <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(xgb_spec)
+
+# Metrics
+#──────────────────────────────────────────────────────────────────────────────
+metrics <- metric_set(rmse, rsq)
+
+
+```
+
+
+```{r 10.Tune in parallel, cache=TRUE}
+tune_res <- tune_grid(
+  xgb_wf,
+  resamples = folds,
+  grid      = xgb_grid,
+  metrics   = metrics,
+  control   = control_grid(verbose = TRUE, allow_par = TRUE)
+)
+```
+
+
+```{r}
+#Dont use this
+# Register parallel backend
+#───────────────────────────────────────────────────────────────────────────────
+# Use one fewer core than available to keep your machine responsive
+#cores <- parallel::detectCores() - 1
+#cl    <- makePSOCKcluster(cores)
+#registerDoParallel(cl)
+
+
+# Run the tuning in parallel
+#───────────────────────────────────────────────────────────────────────────────
+#tune_res <- tune_grid(
+ # xgb_wf,
+  #resamples = folds,
+  #grid      = xgb_grid,
+  #metrics   = metrics,
+  #control   = control_grid(verbose = TRUE)
+#)
+
+# Shut down the cluster when you’re done
+#───────────────────────────────────────────────────────────────────────────────
+#stopCluster(cl)
+#registerDoSEQ()  # back to sequential
+
+
+```
+
+
+
+```{r 11.Extract best params}
+# Extract best results (by RMSE or R²)
+#───────────────────────────────────────────────────────────────────────────────
+best_rmse <- select_best(tune_res, "rmse")
+best_rsq  <- select_best(tune_res, "rsq")
+```
+
+
+```{r 12.Final fit & evaluation}
+
+# RMSE‑tuned
+
+final_params   <- finalize_parameters(xgb_params, best_rmse)
+final_spec_rmse <- xgb_spec %>% finalize_model(final_params)
+
+final_wf_rmse <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(final_spec_rmse)
+
+final_fit_rmse <- final_wf_rmse %>% fit(data = train_data)
+
+preds_rmse <- predict(final_fit_rmse, test_data) %>%
+  bind_cols(test_data)
+
+preds_rmse %>% metrics(truth = yield_mg_ha, estimate = .pred)
+
+
+```
+
+
+```{r}
+## R Square‑tuned
+final_params_rsq <- finalize_parameters(xgb_params, best_rsq)
+final_spec_rsq   <- xgb_spec %>% finalize_model(final_params_rsq)
+
+final_wf_rsq <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(final_spec_rsq)
+
+final_fit_rsq <- final_wf_rsq %>% fit(data = train_data)
+
+preds_rsq <- predict(final_fit_rsq, test_data) %>%
+  bind_cols(test_data)
+
+preds_rsq %>% metrics(truth = yield_mg_ha, estimate = .pred)
+
+```
+
+
+
+```{r 13.Variable importance}
+
+# Actual vs Predicted (RMSE)
+ggplot(preds_rmse, aes(x = yield_mg_ha, y = .pred)) +
+  geom_abline(lty = 2, color = "grey50") +
+  geom_point(alpha = 0.4) +
+  labs(title = "RMSE‑tuned: Actual vs Predicted")
+
+# VIP for RMSE model
+vip(final_fit_rmse$fit, num_features = 20) +
+  labs(title = "Top 20 Predictors (RMSE model)")
+
+```
+
+# Save model
+
+```{r}
+saveRDS(final_fit_rmse, "xgb_final_model_rmse.rds")
+saveRDS(final_fit_rsq,  "xgb_final_model_rsq.rds")
+
+```
+
+# Predict on new test set
+
+```{r}
+test_raw <- read_csv("data/testing/test_predictors.csv")
+
+test_preds <- test_raw %>%
+  mutate(
+    date_planted    = mdy(date_planted),
+    date_harvested  = mdy(date_harvested),
+    days_to_harvest = as.numeric(date_harvested - date_planted)
+  ) %>%
+  select(-date_planted, -date_harvested) %>%
+  # If using the RMSE model:
+  bind_cols(predict(final_fit_rmse, .)) 
+
+write_csv(test_preds, "data/testing/test_predictions.csv")
+
+```
