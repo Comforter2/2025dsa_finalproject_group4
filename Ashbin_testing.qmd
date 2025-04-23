@@ -4,6 +4,11 @@ format: html
 editor: visual
 ---
 
+```{r}
+# Global options
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE)
+```
+
 #Loading libraries
 
 ```{r}
@@ -30,7 +35,7 @@ library(corrplot)     # Correlation matrix visualization
 library(GGally)       # Pairwise plots (ggpairs)
 
 # --- Machine Learning Framework ---
-library(tidymodels)   # Modeling and machine learning
+library(tidymodels)   # for parsnip, recipes, tune, etc.
 
 # --- Modeling Engines ---
 library(xgboost)      # XGBoost implementation
@@ -61,19 +66,11 @@ library(DataExplorer) # For EDA
 ```
 
 # Preparation before coding
-
 ```{r}
-# Parallel plan: use all but one core
+# Parallel plan: use all CPU cores minus one
 plan(multisession, workers = parallel::detectCores() - 1)
 set.seed(1996)
 
-# Verify NVIDIA GPU via system call (Windows)
-gpu_info <- try(system("nvidia-smi -L", intern = TRUE), silent = TRUE)
-if (inherits(gpu_info, "try-error") || length(gpu_info) == 0) {
-  warning("Cannot detect NVIDIA GPU via nvidia-smi. Check CUDA/drivers.")
-} else {
-  cat("Detected GPUs:\n", paste(gpu_info, collapse = "\n"), "\n")
-}
 ```
 
 ------------------------------------------------------------------------
@@ -138,7 +135,7 @@ ml_data_clean <- ml_data %>%
 mutate(across(all_of(num_vars), ~ if_else(is.na(.), median(., na.rm=TRUE), .))) %>%
 mutate(across(all_of(cat_vars), ~ if_else(is.na(.), get_mode(.), .)))
 
-view(ml_data_clean)
+#view(ml_data_clean)
 ```
 
 ```{r 6.Train/Test split}
@@ -158,6 +155,7 @@ rec <- recipe(yield_mg_ha ~ ., data = train_data) %>%
 ```
 
 ```{r 8.XGBoost Specification}
+
 xgb_spec <- boost_tree(
   trees          = tune(),
   tree_depth     = tune(),
@@ -167,11 +165,8 @@ xgb_spec <- boost_tree(
   mtry           = tune()
 ) %>%
   set_engine(
-    "xgboost",
-    tree_method = "gpu_hist",
-    predictor   = "gpu_predictor",
-    gpu_id      = 0,
-    nthread     = parallel::detectCores() - 1
+    engine  = "xgboost",
+    nthread = parallel::detectCores() - 1
   ) %>%
   set_mode("regression")
 
@@ -215,6 +210,8 @@ metrics <- metric_set(rmse, rsq)
 ```
 
 ```{r 10.Tune in parallel, cache=TRUE}
+plan(multisession, workers = 1)
+
 tune_res <- tune_grid(
   xgb_wf,
   resamples = folds,
@@ -222,6 +219,9 @@ tune_res <- tune_grid(
   metrics   = metrics,
   control   = control_grid(verbose = TRUE, allow_par = TRUE)
 )
+
+# If failures persist, inspect error notes:
+show_notes(tune_res)
 ```
 
 ```{r}
@@ -320,10 +320,9 @@ saveRDS(final_fit_rsq,  "xgb_final_model_rsq.rds")
 
 ```
 
-# Predict on new test set
 
-```{r}
-test_raw <- read_csv("data/testing/test_predictors.csv")
+```{r ** Predict on new test set **}
+#test_raw <- read_csv("data/testing/test_predictors.csv")
 
 test_preds <- test_raw %>%
   mutate(
@@ -335,6 +334,6 @@ test_preds <- test_raw %>%
   # If using the RMSE model:
   bind_cols(predict(final_fit_rmse, .)) 
 
-write_csv(test_preds, "data/testing/test_predictions.csv")
+#write_csv(test_preds, "data/testing/test_predictions.csv")
 
 ```
