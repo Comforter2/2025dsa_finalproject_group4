@@ -98,7 +98,6 @@ raw_data <- t_traits %>%
 
 ```
 
-
 ```{r 2.EDA}
 glimpse(raw_data)
 summary(raw_data)
@@ -115,19 +114,17 @@ data_feat = raw_data %>%
   ) %>%
   select(-date_planted, -date_harvested)
 
-view(data_feat)
+#view(data_feat)
 
 ```
-
 
 ```{r 4.Select ML predictors}
 ml_data <- data_feat %>%
   select(-year, -site, -replicate, -block, -hybrid, -previous_crop)
 
 
-view(ml_data)
+#view(ml_data)
 ```
-
 
 ```{r 5 Handle missing values}
 # A) Drop all rows with any NA
@@ -144,14 +141,12 @@ mutate(across(all_of(cat_vars), ~ if_else(is.na(.), get_mode(.), .)))
 view(ml_data_clean)
 ```
 
-
 ```{r 6.Train/Test split}
 split_obj  <- initial_split(ml_data_clean, prop = 0.8, strata = yield_mg_ha)
 train_data <- training(split_obj)
 test_data  <- testing(split_obj)
 
 ```
-
 
 ```{r 7.Preprocessing recipe}
 rec <- recipe(yield_mg_ha ~ ., data = train_data) %>%
@@ -161,7 +156,6 @@ rec <- recipe(yield_mg_ha ~ ., data = train_data) %>%
   step_dummy(all_nominal_predictors())
 
 ```
-
 
 ```{r 8.XGBoost Specification}
 xgb_spec <- boost_tree(
@@ -182,7 +176,6 @@ xgb_spec <- boost_tree(
   set_mode("regression")
 
 ```
-
 
 ```{r 9.Tuning grid & resamples}
 # for reproducibility
@@ -221,7 +214,6 @@ metrics <- metric_set(rmse, rsq)
 
 ```
 
-
 ```{r 10.Tune in parallel, cache=TRUE}
 tune_res <- tune_grid(
   xgb_wf,
@@ -231,7 +223,6 @@ tune_res <- tune_grid(
   control   = control_grid(verbose = TRUE, allow_par = TRUE)
 )
 ```
-
 
 ```{r}
 #Dont use this
@@ -261,15 +252,12 @@ tune_res <- tune_grid(
 
 ```
 
-
-
 ```{r 11.Extract best params}
 # Extract best results (by RMSE or R²)
 #───────────────────────────────────────────────────────────────────────────────
 best_rmse <- select_best(tune_res, "rmse")
 best_rsq  <- select_best(tune_res, "rsq")
 ```
-
 
 ```{r 12.Final fit & evaluation}
 
@@ -292,7 +280,6 @@ preds_rmse %>% metrics(truth = yield_mg_ha, estimate = .pred)
 
 ```
 
-
 ```{r}
 ## R Square‑tuned
 final_params_rsq <- finalize_parameters(xgb_params, best_rsq)
@@ -310,8 +297,6 @@ preds_rsq <- predict(final_fit_rsq, test_data) %>%
 preds_rsq %>% metrics(truth = yield_mg_ha, estimate = .pred)
 
 ```
-
-
 
 ```{r 13.Variable importance}
 
