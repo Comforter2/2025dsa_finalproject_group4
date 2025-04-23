@@ -1,5 +1,6 @@
 ---
 title: "data_wrangling_ML_project_group4"
+author: "Comfort and Ashbin"
 format: html
 editor: visual
 ---
@@ -35,7 +36,6 @@ You are also being provided with the following **testing data** for year 2024:\
 library(tidyverse)
 library(USAboundaries) # for US state boundaries
 library(sf) # for US map
-library(daymetr)
 ```
 
 # Import training data
@@ -206,8 +206,9 @@ train_data_w = train_data %>%
   ungroup() %>%
   mutate(previous_crop = as.factor(ifelse(is.na(previous_crop), 
                                           "Unknown", as.character(previous_crop))
-                                   ))# replaces NA with "Unknown"
-         
+                                   )) %>% # replaces NA with "Unknown"
+  rename(lon = longitude,
+         lat = latitude)
 train_data_w 
 
 

@@ -1,0 +1,81 @@
+---
+title: "open_source_ML_project_group4"
+author: "Comfort and Ashbin"
+format: html
+editor: visual
+---
+
+# Setup  
+```{r load library}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(USAboundaries) # for US state boundaries
+library(sf) # for US map
+library(daymetr)
+```
+
+
+```{r import data}
+meta_soil_traits = read_csv("../data/training/meta_soil_traits.csv")
+
+meta_soil_traits
+
+summary(meta_soil_traits)
+```
+
+# EDA
+```{r unique values}
+unique(meta_soil_traits$site_year) %>%
+  length()
+
+unique(meta_soil_traits$year) %>%
+  length()
+```
+```{r yield}
+ggplot(data = meta_soil_traits
+       ) +
+  
+  geom_density(aes(x= yield_adj_mg_ha))
+```
+# Daymet data extraction
+
+```{r daymet for site 1 year 1}
+#meta_soil_traits
+  
+daymet_one = download_daymet(site = meta_soil_traits$site[[1]],
+                             lat = meta_soil_traits$lat[[1]],
+                             lon = meta_soil_traits$lon[[1]],
+                             start = meta_soil_traits$year[[1]],
+                             end = meta_soil_traits$year[[1]],
+                             simplify = T
+                             )
+daymet_one
+```
+
+
+```{r daymet for all site_years}
+daymet_all = meta_soil_traits %>%
+  mutate(weather = pmap(list(.y = year,
+                             .site = site,
+                             .lat = lat,
+                             .lon = lon),
+                        function(.y, .site, .lat, .lon)
+                          download_daymet(
+                          site = .site,
+                          lat = .lat,
+                          lon = .lon,
+                          start = .y,
+                          end = .y,
+                          simplify = T,
+                          silent = T) %>%
+                            rename(.year = year,
+                                   .site = site)))
+```
+
+
+
+
+
+
