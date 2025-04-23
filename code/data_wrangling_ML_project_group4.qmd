@@ -201,9 +201,13 @@ train_data_w = train_data %>%
                 ~ ifelse(is.character(.) & . == "#VALUE!", NA, .))) %>% 
   mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>% 
   group_by(site) %>%
-  mutate(across(soilpH:norm_pk, ~ ifelse(is.na(.), 
+  mutate(across(soilpH:norm_pk, ~ ifelse(is.na(.), # replace NAs with means
                                          mean(., na.rm = TRUE), .))) %>%
-  ungroup() 
+  ungroup() %>%
+  mutate(previous_crop = as.factor(ifelse(is.na(previous_crop), 
+                                          "Unknown", as.character(previous_crop))
+                                   ))# replaces NA with "Unknown"
+         
 train_data_w 
 
 
@@ -211,6 +215,13 @@ train_data_w
 
 ```{r missing data}
 gg_miss_var(train_data_w) + 
-  labs(title = "Missing values per variable")
+  labs(title = "Missing values per variable") #leave the remaining missing soil values
 ```
-Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot.
+Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
+
+```{r export data file}
+view(train_data_w)
+
+write_csv(train_data_w, "../data/training/meta_soil_traits.csv")
+```
+
