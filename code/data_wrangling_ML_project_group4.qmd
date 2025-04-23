@@ -62,6 +62,10 @@ glimpse(t_traits)
 length(unique(t_traits$year))
 length(unique(t_traits$site))
 length(unique(t_traits$hybrid))
+length(unique(t_traits$replicate))
+length(unique(t_traits$block))
+length(unique(t_traits$date_planted))
+length(unique(t_traits$date_harvested))
 ```
 
 ```{r corn yield EDA}
@@ -116,33 +120,97 @@ unique(t_soil$year) %>%
 ```{r creating site_year columns}
 # creating site_year columns for t_traits and t_meta
 t_traits_sy = t_traits %>%
-  mutate(site_year = paste0(site, "_", year))
+  mutate(site_year = paste0(site, "_", year)) %>%
+  distinct() %>% # to remove duplicates and select unique combinations of all columns asides from yield and moisture
+  mutate(yield_adj_mg_ha = yield_mg_ha * 
+           ((100 - grain_moisture) / (100 - 15.5))) %>% # adjust yield to moisture of 15.5%
+  mutate(
+    date_planted    = mdy(date_planted),
+    date_harvested  = mdy(date_harvested),
+    days_to_harvest = as.numeric(date_harvested - date_planted)
+  ) %>%
+  select(-date_planted, -date_harvested)
+
+#view(t_traits_sy)
 
 t_meta_sy = t_meta %>%
-  mutate(site_year = paste0(site, "_", year))
+  select(-Tmax, -Tmin) %>% # we get these values from the open_source data
+  mutate(site_year = paste0(site, "_", year)) %>%
+  distinct()
 
 # renaming the site_year column in t_soil
 t_soil_sy = t_soil %>%
-  mutate(site_year = site)
+  mutate(site_year = site) %>%
+  distinct()
 ```
+
+
+```{r}
+unique(t_traits_sy$site_year) %>%
+  length()
+
+unique(t_meta_sy$site_year) %>%
+  length()
+
+unique(t_soil_sy$site_year) %>%
+  length()
+```
+
 
 ```{r left_join for all data}
 train_data = t_traits_sy %>%
   left_join(t_meta_sy, by = "site_year") %>%
   left_join(t_soil_sy, by = "site_year") %>%
   filter(!is.na(longitude) & !is.na(latitude)) %>% # removes rows where either longitude or latitude are missing
+  mutate(across(c(hybrid, previous_crop), as.factor)) %>%
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>%
   mutate(year = year.x,
          site = site.x) %>%
-  select(-year.x,
-         -site.x,
-         -year.y,
-         -site.y) %>% # removes unnecessary columns
-  select(site_year, year, site, everything())
+  select(-year.x, -site.x, -year.y, -site.y,
+         -yield_mg_ha, -grain_moisture, 
+         -replicate, -block) %>% # removes unnecessary columns
+  select(site_year, year, site, everything()) %>% # arrange accordingly
+  filter(latitude < 50)
   
-train_data # this data contains all site years having longitude and latitude for further wrangling
+#view(train_data) # this data contains all site years having longitude and latitude for further wrangling
 ```
 
 ```{r}
 summary(train_data)
 glimpse(train_data)
 ```
+```{r}
+# create map of usa to see spatial distribution
+states = us_states() %>%
+  filter(!(state_abbr %in% 
+             c("PR", "AK", "HI")))
+
+ggplot() +
+  geom_sf(data = states) +
+  geom_point(data = train_data,
+             aes(x = longitude,
+                 y = latitude))
+```
+
+There is a point with longitude and latitude outside of the range (with latitude above 50N) and re-plot graph.
+
+
+```{r #VALUE! and NAs for soil}
+train_data_w = train_data %>%
+  mutate(across(soilpH:norm_pk, # replaces #VALUE! in columns with NAs
+                ~ ifelse(is.character(.) & . == "#VALUE!", NA, .))) %>% 
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>% 
+  group_by(site) %>%
+  mutate(across(soilpH:norm_pk, ~ ifelse(is.na(.), 
+                                         mean(., na.rm = TRUE), .))) %>%
+  ungroup() 
+train_data_w 
+
+
+```
+
+```{r missing data}
+gg_miss_var(train_data_w) + 
+  labs(title = "Missing values per variable")
+```
+Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot.
