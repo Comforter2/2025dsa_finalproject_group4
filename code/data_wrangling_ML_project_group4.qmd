@@ -1,0 +1,280 @@
+---
+title: "data_wrangling_ML_project_group4"
+author: "Comfort and Ashbin"
+format: html
+editor: visual
+---
+
+# Introduction and Goals
+
+The goal of this script is to perform data wrangling of available data set, and create a final tidy data suitable to train models.
+
+This would include importing data, cleaning, obtaining more data from external open sources, and performing feature engineering to create more useful predictor variables.
+
+The following are details of data files available to be used in this script:
+
+You are being provided with a **corn variety trial** data set.\
+This data contains over **164,000 rows** spanning **10 years** (2014-2023), **45 sites** across the USA, for a total of **270** site-years, where over **5,000** corn hybrids were evaluated.
+
+You are being provided with the following **training data** for years 2014-2023:
+
+-   Trait information (including site, year, hybrid, yield, and grain moisture)\
+-   Meta information (including site, year, previous crop, longitude, and latitude)\
+-   Soil information (including site, year, soil pH, soil organic matter, soil P, soil K)
+
+You are also being provided with the following **testing data** for year 2024:\
+- Submission information (site, year, hybrid, **no yield**)\
+- Meta information (same as training)\
+- Soil information (same as training)
+
+# Set up
+
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(USAboundaries) # for US state boundaries
+library(sf) # for US map
+library(daymetr)
+library(doParallel)
+library(future)
+```
+
+# Import training data
+
+```{r}
+#| message: false
+#| warning: false
+
+t_traits = read_csv("../data/training/training_trait.csv") #initial training data set
+t_meta = read_csv("../data/training/training_meta.csv") #initial training meta data
+t_soil = read_csv("../data/training/training_soil.csv") #initial training soil data
+```
+
+# EDA and summary of data
+
+```{r t_traits summary}
+t_traits %>%
+  summary()
+```
+
+```{r t_traits glimpse}
+glimpse(t_traits)
+
+length(unique(t_traits$year))
+length(unique(t_traits$site))
+length(unique(t_traits$hybrid))
+length(unique(t_traits$replicate))
+length(unique(t_traits$block))
+length(unique(t_traits$date_planted))
+length(unique(t_traits$date_harvested))
+```
+
+```{r corn yield EDA}
+# This is to check the distribution of corn yield
+
+ggplot(data = t_traits
+       ) +
+  geom_density(aes(x= yield_mg_ha))
+```
+
+```{r t_meta summary}
+summary(t_meta)
+```
+
+```{r t_meta glimpse}
+glimpse(t_meta)
+
+unique(t_meta$site) %>%
+  length()
+unique(t_meta$year) %>%
+  length()
+unique(t_meta$latitude) %>%
+  length()
+unique(t_meta$longitude) %>%
+  length()
+```
+
+```{r t_soil summary}
+summary(t_soil)
+```
+
+```{r t_soil glimpse}
+glimpse(t_soil)
+
+unique(t_soil$site) %>%
+  length()
+unique(t_soil$year) %>%
+  length()
+```
+
+## Observations for data wrangling checklist
+
+1.  Yield needs to be adjusted for standard moisture content.
+2.  Yield needs to be converted to kg_ha rather than mg_ha or confirm if it is a typo
+3.  Need to combine the three data sets using year and site as a common link
+4.  Number of unique sites in t_traits is 45, in t_meta is 43, and in t_soil is represented as site_year. Retaining the 43 sites in t_meta might be good since we have the longitude and latitude, useful for open source data.
+5.  We might need to do a paste0() to create a site_year column for t_trait and t_meta and use it as the column for a left_join or maybe bind_rows. Or split the site_year column in t_soil and use
+6.  Number of unique years for t_traits and t_meta are 10 years, but t_soil is missing year 2014, so unique years is 9, not 10. Maybe we need to exclude year 2014 from other data set? Or can we get soil data from an external and open source?
+
+# Data wrangling
+
+```{r creating site_year columns}
+# creating site_year columns for t_traits and t_meta
+t_traits_sy = t_traits %>%
+  mutate(site_year = paste0(site, "_", year)) %>%
+  distinct() %>% # to remove duplicates and select unique combinations of all columns asides from yield and moisture
+  mutate(yield_adj_mg_ha = yield_mg_ha * 
+           ((100 - grain_moisture) / (100 - 15.5))) %>% # adjust yield to moisture of 15.5%
+  mutate(
+    date_planted    = mdy(date_planted),
+    date_harvested  = mdy(date_harvested),
+    days_to_harvest = as.numeric(date_harvested - date_planted)
+  ) %>%
+  select(-date_planted, -date_harvested)
+
+#view(t_traits_sy)
+
+t_meta_sy = t_meta %>%
+  select(-Tmax, -Tmin) %>% # we get these values from the open_source data
+  mutate(site_year = paste0(site, "_", year)) %>%
+  distinct() %>%
+  rename(lon = longitude,
+         lat = latitude) %>%
+  filter(lat < 50)
+
+# renaming the site_year column in t_soil
+t_soil_sy = t_soil %>%
+  mutate(site_year = site) %>%
+  distinct()
+```
+
+
+
+```{r daymet for all site_years}
+plan(multisession, workers = 4)
+
+registerDoParallel(cores = parallel::detectCores()-1)
+
+daymet_all = t_meta_sy %>%
+  mutate(weather = pmap(list(.y = year,
+                             .site = site,
+                             .lat = lat,
+                             .lon = lon),
+                        function(.y, .site, .lat, .lon)
+                          download_daymet(
+                          site = .site,
+                          lat = .lat,
+                          lon = .lon,
+                          start = .y,
+                          end = .y,
+                          simplify = T,
+                          silent = F) %>%
+                            rename(.year = year,
+                                   .site = site)))
+
+daymet_all
+```
+
+
+```{r}
+unique(t_traits_sy$site_year) %>%
+  length()
+
+unique(daymet_all$site_year) %>%
+  length()
+
+unique(t_soil_sy$site_year) %>%
+  length()
+```
+
+
+```{r left_join for all data}
+train_data = t_traits_sy %>%
+  left_join(daymet_all, by = "site_year") %>%
+  left_join(t_soil_sy, by = "site_year") %>%
+  filter(!is.na(lon) & !is.na(lat)) %>% # removes rows where either longitude or latitude are missing
+  mutate(across(c(hybrid, previous_crop), as.factor)) %>%
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>%
+  mutate(year = year.x,
+         site = site.x) %>%
+  select(-year.x, -site.x, -year.y, -site.y,
+         -yield_mg_ha, -grain_moisture, 
+         -replicate, -block) %>% # removes unnecessary columns
+  select(site_year, year, site, everything()) # arrange accordingly
+  
+  
+train_data # this data contains all site years having longitude and latitude for further wrangling
+```
+
+```{r}
+summary(train_data)
+glimpse(train_data)
+```
+
+
+```{r}
+# create map of usa to see spatial distribution
+states = us_states() %>%
+  filter(!(state_abbr %in% 
+             c("PR", "AK", "HI")))
+
+ggplot() +
+  geom_sf(data = states) +
+  geom_point(data = train_data,
+             aes(x = lon,
+                 y = lat))
+```
+
+There is a point with longitude and latitude outside of the range (with latitude above 50N) and re-plot graph.
+
+
+```{r #VALUE! and NAs for soil}
+train_data_w = train_data %>%
+  mutate(across(soilpH:norm_pk, # replaces #VALUE! in columns with NAs
+                ~ ifelse(is.character(.) & . == "#VALUE!", NA, .))) %>% 
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>% 
+  group_by(site) %>%
+  mutate(across(soilpH:norm_pk, ~ ifelse(is.na(.), # replace NAs with means
+                                         mean(., na.rm = TRUE), .))) %>%
+  ungroup() %>%
+  mutate(previous_crop = as.factor(ifelse(is.na(previous_crop), 
+                                          "Unknown", as.character(previous_crop))
+                                   )) # replaces NA with "Unknown"
+train_data_w 
+
+
+```
+
+
+```{r missing data}
+gg_miss_var(train_data_w) + 
+  labs(title = "Missing values per variable") #leave the remaining missing soil values
+```
+Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
+
+
+```{r unnest weather data}
+#train_data_unnest = train_data_w %>%
+ # unnest(weather) %>%
+  #pivot_wider(names_from = measurement,
+         #     values_from = value) %>%
+ # janitor::clean_names()
+
+#train_data_unnest
+
+```
+
+
+```{r}
+#saveRDS(train_data_w, "../data/training/train_data_w.rds")
+```
+
+
+
+```{r export data file}
+
+#write_csv(train_data_w, "../data/training/meta_soil_traits_n.csv")
+```
+
