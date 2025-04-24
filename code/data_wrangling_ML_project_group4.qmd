@@ -256,16 +256,6 @@ gg_miss_var(train_data_w) +
 
 Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
 
-```{r unnest weather data}
-#train_data_unnest = train_data_w %>%
- # unnest(weather) %>%
-  #pivot_wider(names_from = measurement,
-         #     values_from = value) %>%
- # janitor::clean_names()
-
-#train_data_unnest
-
-```
 
 ```{r export data file}
 

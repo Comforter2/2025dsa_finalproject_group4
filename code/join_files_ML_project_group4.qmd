@@ -1,0 +1,159 @@
+---
+title: "join_files_ML_project_group4"
+author: "Comfort and Ashbin"
+format: html
+editor: visual
+---
+
+# Introduction and Goals
+
+The goal of this script is to merge weather data with other files and wrangle
+
+# Set up
+
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(USAboundaries) # for US state boundaries
+library(sf) # for US map
+library(daymetr)
+library(doParallel)
+library(future)
+```
+
+# Import training data
+
+```{r}
+#| message: false
+#| warning: false
+
+t_traits = read_csv("../data/training/training_trait.csv") #initial training data set
+
+t_soil = read_csv("../data/training/training_soil.csv") #initial training soil data
+
+weather = read_csv("../data/training/weather_data.csv")
+```
+
+# EDA and summary of data
+
+```{r t_traits summary}
+t_traits %>%
+  summary()
+```
+
+```{r t_traits glimpse}
+glimpse(t_traits)
+
+length(unique(t_traits$year))
+length(unique(t_traits$site))
+length(unique(t_traits$hybrid))
+length(unique(t_traits$replicate))
+length(unique(t_traits$block))
+length(unique(t_traits$date_planted))
+length(unique(t_traits$date_harvested))
+```
+
+```{r corn yield EDA}
+# This is to check the distribution of corn yield
+
+ggplot(data = t_traits
+       ) +
+  geom_density(aes(x= yield_mg_ha))
+```
+
+```{r t_soil summary}
+summary(t_soil)
+```
+
+```{r t_soil glimpse}
+glimpse(t_soil)
+
+unique(t_soil$site) %>%
+  length()
+unique(t_soil$year) %>%
+  length()
+```
+
+
+# Data wrangling
+
+```{r creating site_year columns}
+# creating site_year columns for t_traits and t_meta
+t_traits_sy = t_traits %>%
+  mutate(site_year = paste0(site, "_", year)) %>%
+  distinct() %>% # to remove duplicates and select unique combinations of all columns asides from yield and moisture
+  mutate(yield_adj_mg_ha = yield_mg_ha * 
+           ((100 - grain_moisture) / (100 - 15.5))) %>% # adjust yield to moisture of 15.5%
+  mutate(
+    date_planted    = mdy(date_planted),
+    date_harvested  = mdy(date_harvested),
+    days_to_harvest = as.numeric(date_harvested - date_planted)
+  ) %>%
+  select(-date_planted, -date_harvested)
+
+# renaming the site_year column in t_soil
+t_soil_sy = t_soil %>%
+  mutate(site_year = site) %>%
+  distinct()
+```
+
+
+```{r left_join for all data}
+plan(multisession, workers = 4)
+
+registerDoParallel(cores = parallel::detectCores()-1)
+
+train_data = t_traits_sy %>%
+  left_join(weather, by = "site_year") %>%
+  left_join(t_soil_sy, by = "site_year") %>%
+  filter(!is.na(lon) & !is.na(lat)) %>% # removes rows where either longitude or latitude are missing
+  mutate(across(c(hybrid, previous_crop), as.factor)) %>%
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>%
+  mutate(year = year.x,
+         site = site.x) %>%
+  select(-year.x, -site.x, -year.y, -site.y,
+         -yield_mg_ha, -grain_moisture, 
+         -replicate, -block) %>% # removes unnecessary columns
+  select(site_year, year, site, everything()) # arrange accordingly
+  
+  
+train_data # this data contains all site years having longitude and latitude for further wrangling
+```
+
+```{r summary train_data}
+summary(train_data)
+glimpse(train_data)
+```
+
+
+```{r #VALUE! and NAs for soil}
+train_data_w = train_data %>%
+  mutate(across(soilpH:norm_pk, # replaces #VALUE! in columns with NAs
+                ~ ifelse(is.character(.) & . == "#VALUE!", NA, .))) %>% 
+  mutate(across(soilpH:norm_pk, ~ as.numeric(.))) %>% 
+  group_by(site) %>%
+  mutate(across(soilpH:norm_pk, ~ ifelse(is.na(.), # replace NAs with means
+                                         mean(., na.rm = TRUE), .))) %>%
+  ungroup() %>%
+  mutate(previous_crop = as.factor(ifelse(is.na(previous_crop), 
+                                          "Unknown", as.character(previous_crop))
+                                   )) # replaces NA with "Unknown"
+train_data_w 
+
+
+```
+
+
+```{r missing data}
+gg_miss_var(train_data_w) + 
+  labs(title = "Missing values per variable") #leave the remaining missing soil values
+```
+
+Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
+
+```{r export data file}
+
+#write_csv(train_data_w, "../data/training/meta_soil_traits_n.csv")
+```
