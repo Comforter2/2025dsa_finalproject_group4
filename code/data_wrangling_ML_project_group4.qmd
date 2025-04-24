@@ -150,49 +150,53 @@ t_soil_sy = t_soil %>%
   distinct()
 ```
 
-
-
 ```{r daymet for all site_years}
 plan(multisession, workers = 4)
 
 registerDoParallel(cores = parallel::detectCores()-1)
 
-daymet_all = t_meta_sy %>%
-  mutate(weather = pmap(list(.y = year,
-                             .site = site,
-                             .lat = lat,
-                             .lon = lon),
-                        function(.y, .site, .lat, .lon)
-                          download_daymet(
-                          site = .site,
-                          lat = .lat,
-                          lon = .lon,
-                          start = .y,
-                          end = .y,
-                          simplify = T,
-                          silent = F) %>%
-                            rename(.year = year,
-                                   .site = site)))
+#daymet_all = t_meta_sy %>%
+  #mutate(weather = pmap(list(.y = year,
+                          #   .site = site,
+                          #   .lat = lat,
+                           #  .lon = lon),
+                      #  function(.y, .site, .lat, .lon)
+                       #   download_daymet(
+                        #  site = .site,
+                         # lat = .lat,
+                         # lon = .lon,
+                        #  start = .y,
+                        #  end = .y,
+                        #  simplify = T,
+                        #  silent = F) %>%
+                         #   rename(.year = year,
+                          #         .site = site)))
 
-daymet_all
+#daymet_all
 ```
 
+```{r unnest daymet}
+#daymet_unnest = daymet_all %>%
+#  unnest(weather) %>%
+#  pivot_wider(names_from = measurement,
+#              values_from = value) %>%
+#  janitor::clean_names()
 
-```{r}
-unique(t_traits_sy$site_year) %>%
-  length()
-
-unique(daymet_all$site_year) %>%
-  length()
-
-unique(t_soil_sy$site_year) %>%
-  length()
+#daymet_unnest
 ```
 
+```{r export weather data}
+#write_csv(daymet_unnest, 
+          #"../data/training/weather_data.csv")
+```
+
+```{r import weather data}
+weather = read_csv("../data/training/weather_data.csv")
+```
 
 ```{r left_join for all data}
 train_data = t_traits_sy %>%
-  left_join(daymet_all, by = "site_year") %>%
+  left_join(weather, by = "site_year") %>%
   left_join(t_soil_sy, by = "site_year") %>%
   filter(!is.na(lon) & !is.na(lat)) %>% # removes rows where either longitude or latitude are missing
   mutate(across(c(hybrid, previous_crop), as.factor)) %>%
@@ -213,8 +217,7 @@ summary(train_data)
 glimpse(train_data)
 ```
 
-
-```{r}
+```{r map of sites across US}
 # create map of usa to see spatial distribution
 states = us_states() %>%
   filter(!(state_abbr %in% 
@@ -228,7 +231,6 @@ ggplot() +
 ```
 
 There is a point with longitude and latitude outside of the range (with latitude above 50N) and re-plot graph.
-
 
 ```{r #VALUE! and NAs for soil}
 train_data_w = train_data %>%
@@ -247,13 +249,12 @@ train_data_w
 
 ```
 
-
 ```{r missing data}
 gg_miss_var(train_data_w) + 
   labs(title = "Missing values per variable") #leave the remaining missing soil values
 ```
-Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
 
+Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
 
 ```{r unnest weather data}
 #train_data_unnest = train_data_w %>%
@@ -266,15 +267,7 @@ Since some previous crops are missing, we can fill them up with "Unknown" in cod
 
 ```
 
-
-```{r}
-#saveRDS(train_data_w, "../data/training/train_data_w.rds")
-```
-
-
-
 ```{r export data file}
 
 #write_csv(train_data_w, "../data/training/meta_soil_traits_n.csv")
 ```
-
