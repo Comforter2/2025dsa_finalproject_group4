@@ -1,0 +1,808 @@
+---
+title: "Final_merged_ML"
+format: html
+editor: visual
+---
+
+#A.Load Libraries
+
+```{r}
+#| message: false
+#| warning: false
+
+#Loading necessary libraries
+
+# --- Data Import and Basic Handling ---
+library(readr)        # For reading CSV and delimited text files
+library(janitor)      # For cleaning column names, removing empty rows/columns
+library(naniar)       # Handling missing data
+
+# --- Data Wrangling & Cleaning ---
+library(dplyr)        # Data manipulation (filter, mutate, group_by, etc.)
+library(tidyr)        # Data tidying (pivoting, reshaping)
+library(lubridate)    # Date/time manipulation
+library(tidyverse)    # Collection of packages for data science
+
+
+# --- Visualization ---
+library(ggplot2)      # Core plotting
+library(ggthemes)     # Extra themes for ggplot2
+library(ggpubr)       # Publication-ready plots
+library(cowplot)      # Combining multiple ggplots
+library(corrplot)     # Correlation matrix visualization
+library(GGally)       # Pairwise plots (ggpairs)
+library (PerformanceAnalytics)
+library(plotly)
+library(circlize)
+
+# --- Machine Learning Framework ---
+library(tidymodels)   # for parsnip, recipes, tune, etc.
+library(nnet)
+library(hardhat)   # for extract_parameter_set_dials()
+library(dials)     # for hidden_units(), penalty(), dropout(), epochs()
+
+
+# --- Modeling Engines ---
+library(xgboost)      # XGBoost implementation
+library(ranger)       # Fast Random Forests (optional alternative for comparison)
+
+# --- Feature Engineering ---
+library(recipes)      # Included in tidymodels, but useful to load for step-by-step prep
+library(textrecipes)  # If you're working with text data
+library(caret)
+
+# --- Model Tuning & Validation ---
+library(finetune)     # Advanced hyperparameter tuning strategies (racing, ANOVA, etc.)
+library(tune)         # For grid/random tuning workflows
+library(rsample)      # Data splitting (train/test, cross-validation)
+
+# --- Metrics and Evaluation ---
+library(yardstick)    # Evaluation metrics (RMSE, R², MAE, etc.)
+library(vip)          # Variable importance plots
+library(pROC)         # ROC and AUC curves for classification (if needed)
+
+# --- Parallel Processing ---
+library(doParallel)   # Enable parallel computation to speed up tuning/resampling
+library(future)
+
+# --- Utilities & Diagnostics ---
+library(car)          # Variance inflation factors, etc.
+library (skimr)         # For a quick skim/summary of the data
+library(DataExplorer) # For EDA
+
+
+
+```
+
+#------------------------------------------------------------------------------------------
+
+# 2. Read and merge data (left join)
+
+```{r}
+#| message: false
+#| warning: false
+#| 
+# Read weather data and compute yearly/site means
+weather_mean <- read_csv("../data/training/weather_data.csv") %>%
+  group_by(year, site) %>%
+  summarise(
+    dayl_s      = mean(dayl_s,      na.rm = TRUE),
+    prcp_mm_day = mean(prcp_mm_day, na.rm = TRUE),
+    srad_w_m_2  = mean(srad_w_m_2,  na.rm = TRUE),
+    swe_kg_m_2   = mean(swe_kg_m_2,   na.rm = TRUE),
+    tmax_deg_c  = mean(tmax_deg_c,  na.rm = TRUE),
+    tmin_deg_c  = mean(tmin_deg_c,  na.rm = TRUE),
+    vp_pa       = mean(vp_pa,       na.rm = TRUE),
+    .groups     = "drop"
+  )
+
+# 2. Read trait data
+trait <- read_csv("../data/training/training_trait.csv")
+
+# 3. Join trait with averaged weather
+trait_weather <- left_join(trait, weather_mean, by = c("year", "site"))
+
+# 4. Read soil data and clean site codes (remove year suffix)
+soil <- read_csv("../data/training/training_soil.csv") %>%
+  mutate(site = sub(paste0("_", year, "$"), "", site))
+
+# 5. Join trait-weather with soil data
+tw_soil <- left_join(trait_weather, soil, by = c("year", "site"))
+
+# 6. Read and clean meta data (drop empty Tmax/Tmin)
+meta <- read_csv("../data/training/training_meta.csv") %>%
+  select(year, site, previous_crop, longitude, latitude)
+
+# 7. Join meta into the combined dataset
+tw_sm_meta <- left_join(tw_soil, meta, by = c("year", "site"))
+
+# 8. Remove all rows with any missing values
+final_merged <- tw_sm_meta %>%
+  drop_na()
+
+# 9. Write out the fully merged and cleaned CSV
+#write_csv(final, "merged_meta_trait_weather_soil_clean.csv")
+
+# 10. Preview first rows
+#print(head(final))
+```
+
+```{r}
+
+# Read weather data and compute yearly/site means
+weather_mean = read_csv("../data/training/weather_data.csv") %>%
+  group_by(year, site) %>%
+  summarise(
+    dayl_s      = mean(dayl_s,      na.rm = TRUE),
+    prcp_mm_day = mean(prcp_mm_day, na.rm = TRUE),
+    srad_w_m_2  = mean(srad_w_m_2,  na.rm = TRUE),
+    swe_kg_m_2  = mean(swe_kg_m_2,   na.rm = TRUE),
+    tmax_deg_c  = mean(tmax_deg_c,  na.rm = TRUE),
+    tmin_deg_c  = mean(tmin_deg_c,  na.rm = TRUE),
+    vp_pa       = mean(vp_pa,       na.rm = TRUE),
+    .groups     = "drop"
+  )
+
+# Read trait data
+trait = read_csv("../data/training/training_trait.csv")
+
+# Join trait with averaged weather data
+trait_weather = left_join(trait, weather_mean, by = c("year", "site"))
+
+# Read soil data and clean site codes
+trait_weather_soil <- read_csv("../data/training/training_soil.csv") %>%
+  mutate(site = sub(paste0("_", year, "$"), "", site)) %>%
+  left_join(trait_weather, ., by = c("year", "site"))
+
+# 5. Read and clean meta data
+meta <- read_csv("../data/training/training_meta.csv") %>%
+  select(year, site, previous_crop, longitude, latitude)
+
+# 6. Combine all and drop NAs
+merged_clean <- trait_weather_soil %>%
+  left_join(meta, by = c("year", "site")) %>%
+  drop_na() %>%
+  select(-site, -replicate, -block, -dayl_s)
+
+# 7. Feature engineering: parse dates and compute Days After Planting (DAP)
+merged_clean <- merged_clean %>%
+  mutate(
+    date_planted   = mdy(date_planted),
+    date_harvested = mdy(date_harvested),
+    DAP            = as.numeric(date_harvested - date_planted)
+  )
+
+merged_clean
+
+# 8. Factorize remaining categorical variables
+merged_factored <- merged_clean %>%
+  mutate(
+    previous_crop = factor(previous_crop),
+    hybrid        = factor(hybrid)
+  )
+
+# 9. Ensure numeric columns are numeric
+decimal_cols <- c(
+  "prcp_mm_day","srad_w_m_2","swe_kg_m_2",
+  "tmax_deg_c","tmin_deg_c","vp_pa",
+  "soilpH","om_pct","soilk_ppm","soilp_ppm",
+  "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk","DAP", "grain_moisture", "yield_mg_ha"
+)
+merged_factored <- merged_factored %>%
+  mutate(across(all_of(decimal_cols), as.numeric))
+
+# 10. Outlier inspection: boxplots for numeric predictors
+num_vars <- merged_factored %>% select(all_of(decimal_cols))
+boxplot_data <- num_vars %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+ggplot(boxplot_data, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Boxplots for Numeric Predictors")
+
+```
+
+```{r predictors visualization}
+
+# 11. Correlation matrix among continuous predictors
+corr_mat <- cor(num_vars, use = "pairwise.complete.obs")
+corr_mat
+
+
+#correlation matrix 
+corrplot(
+  corr_mat,
+  method    = "color",     # "circle", "number", "shade", etc.
+  type      = "upper",     # show only upper triangle
+  order     = "hclust",    # cluster variables
+  tl.col    = "black",     # label color
+  tl.srt    = 45,          # label rotation
+  addCoef.col = "white",   # add correlation coefficients
+  diag      = FALSE        # hide diagonal
+)
+
+
+# combined scatter + histogram + corr matrix view
+chart.Correlation(
+  num_vars,
+  histogram    = TRUE,
+  pch          = 19,
+  method       = "pearson"  # or "spearman"
+)
+
+
+# Chord Diagram of Strong Correlations 
+strong = ifelse(abs(corr_mat) > 0.7, corr_mat, 0)
+chordDiagram(strong, transparency = 0.5)
+
+
+#Interactive 3D correlation Surface
+plot_ly(
+  z = corr_mat,
+  x = colnames(corr_mat),
+  y = colnames(corr_mat),
+  type = "surface"
+)
+
+```
+#------------------------------------------------------------------------------------------
+#Model-1: XGBoost ML workflow 
+#------------------------------------------------------------------------------------------
+
+# 1. Pre-processing
+
+```{r }
+
+# Set seed for reproducibility
+set.seed(1996)
+
+# Create 70/30 train-test split, stratified by yield
+ml_split <- initial_split(
+  data   = num_vars,
+  prop   = 0.7,
+  strata = yield_mg_ha # Stratify by target variable
+)
+
+# Review split
+ml_split
+
+
+```
+
+### a. Data split
+
+```{r train data}
+train_data = training(ml_split)  # 70% of data
+train_data 
+```
+
+```{r test data}
+
+test_data = testing(ml_split)  # 30% of data
+test_data
+
+```
+
+### b. Distribution of target variable
+
+```{r density plot of target variable}
+ggplot() +
+  geom_density(data = train_data, 
+               aes(x = yield_mg_ha),
+               color = "red") +
+  geom_density(data = test_data, 
+               aes(x = yield_mg_ha),
+               color = "blue") # it shows approximately normal distribution
+  
+```
+
+### c. Data processing with recipe
+
+```{r}
+library(recipes)
+
+ml_recipe <- recipe(yield_mg_ha ~ ., data = train_data) %>%
+  # Center & scale all remaining predictors
+  step_normalize(all_predictors()) %>%
+  # Apply PCA to those normalized predictors
+  # Option A: keep PCs explaining 95% of variance
+  step_pca(all_predictors(), threshold = 0.95)
+  # Option B: keep a fixed number of components, e.g. 5
+  # step_pca(all_predictors(), num_comp = 5)
+
+ml_recipe
+
+```
+
+```{r}
+# Prep the recipe to estimate any required statistics
+ml_prep <- ml_recipe %>% 
+  prep()
+
+# Examine preprocessing steps
+ml_prep
+```
+
+## 2. Training
+
+### a. Model specification
+
+```{r XGBoost specs}
+# XGBoost regression model spec with hyperparameter tuning
+xgb_spec <- boost_tree(
+  trees      = tune(),  # Total number of boosting iterations
+  tree_depth = tune(),  # Maximum depth of each tree
+  min_n      = tune(),  # Minimum number of samples required to split a node
+  learn_rate = tune()   # Step-size shrinkage (learning rate)
+) %>%
+  set_engine("xgboost") %>%  # Specify the XGBoost backend
+  set_mode("regression")     # Fit a regression model
+
+# Print the specification
+xgb_spec
+
+```
+
+### b. Cross-validation setup
+
+```{r 10-fold CV}
+set.seed(1996)
+
+resampling_foldcv = vfold_cv(train_data, 
+                             v = 10) #10-fold cross validation
+
+resampling_foldcv
+resampling_foldcv$splits[[1]]
+```
+
+### c. Hyperparameter grid with Latin Hypercube Sampling
+
+```{r XGBoost grid}
+xgb_grid = grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  learn_rate(),
+  trees(),
+  size = 100
+)
+
+xgb_grid
+```
+
+```{r XGB grid visualization}
+ggplot(data = xgb_grid,
+       aes(x = tree_depth, 
+           y = min_n)) +
+  geom_point(aes(color = factor(learn_rate),
+                 size = trees),
+             alpha = .5,
+             show.legend = FALSE)
+```
+
+## 3. Model Tuning
+
+```{r xgb_grid_result}
+#for reproducibility
+set.seed(1996)
+
+# Parallel processing
+registerDoParallel(cores = parallel::detectCores() - 1)
+
+# Perform grid search tuning
+xgb_res <- tune_grid(
+  object = xgb_spec,
+  preprocessor = ml_recipe, #providing recipe here
+  resamples = resampling_foldcv, # providing re-sampling CV
+  grid = xgb_grid, # providing grid specs
+  control = control_race(save_pred = TRUE)
+)
+
+# Stop parallel processing
+stopImplicitCluster()
+
+# Play a sound when done
+beepr::beep()
+
+# Access metrics
+xgb_res$.metrics[[2]]
+```
+
+## 4. Select Best Models
+
+```{r}
+# Based on lowest RMSE
+best_rmse <- xgb_res %>% 
+  select_best(metric = "rmse")%>% 
+  mutate(source = "best_rmse")
+
+best_rmse
+```
+
+```{r}
+# Based on lowers RMSE within 1% loss
+best_rmse_pct_loss <- xgb_res %>% 
+  select_by_pct_loss("min_n",
+                     metric = "rmse",
+                     limit = 1
+                     )%>% 
+  mutate(source = "best_rmse_pct_loss")
+
+best_rmse_pct_loss
+```
+
+```{r}
+# Based on lowest RMSE within 1 se
+best_rmse_one_std_err <- xgb_res %>% 
+  select_by_one_std_err(metric = "rmse",
+                        eval_time = 100,
+                        trees
+                        )%>% 
+  mutate(source = "best_rmse_one_std_err")
+
+best_rmse_one_std_err
+```
+
+```{r}
+# Based on greatest R2
+best_r2 <- xgb_res %>% 
+  select_best(metric = "rsq")%>% 
+  mutate(source = "best_r2")
+
+best_r2
+```
+
+```{r}
+# Based on lowers R2 within 1% loss
+best_r2_pct_loss <- xgb_res %>% 
+  select_by_pct_loss("min_n",
+                     metric = "rsq",
+                     limit = 1
+                     ) %>% 
+  mutate(source = "best_r2_pct_loss")
+
+best_r2_pct_loss
+```
+
+```{r}
+# Based on lowest R2 within 1 se
+best_r2_one_std_error <- xgb_res %>% 
+  select_by_one_std_err(metric = "rsq",
+                        eval_time = 100,
+                        trees
+                        ) %>%
+  mutate(source = "best_r2_one_std_error")
+
+best_r2_one_std_error
+```
+
+## Compare and Finalize Model
+
+```{r}
+best_rmse %>% 
+  bind_rows(best_rmse_pct_loss, 
+            best_rmse_one_std_err, 
+            best_r2, 
+            best_r2_pct_loss, 
+            best_r2_one_std_error)
+```
+
+## 5. Final Specification
+
+```{r}
+final_spec <- boost_tree(
+  trees = best_r2$trees,           # Number of boosting rounds (trees)
+  tree_depth = best_r2$tree_depth, # Maximum depth of each tree
+  min_n = best_r2$min_n,           # Minimum number of samples to split a node
+  learn_rate = best_r2$learn_rate  # Learning rate (step size shrinkage)
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+final_spec
+```
+
+## 6. Final Fit and Predictions
+
+## Validation
+
+```{r final_fit}
+set.seed(1996)
+final_fit <- last_fit(final_spec,
+                ml_recipe,
+                split = ml_split)
+
+final_fit %>%
+  collect_predictions()
+```
+
+## 7. Evaluate on Test Set
+
+```{r}
+final_fit %>%
+  collect_metrics()
+```
+
+## 8. Evaluate on Training Set
+
+```{r}
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+      data = bake(ml_prep, 
+                  train_data)) %>%
+  augment(new_data = bake(ml_prep, 
+                          train_data)) %>% 
+  rmse(yield_mg_ha, .pred) %>%
+  bind_rows(
+    
+    
+# R2
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+      data = bake(ml_prep, 
+                  train_data)) %>%
+  augment(new_data = bake(ml_prep, 
+                          train_data)) %>% 
+  rsq(yield_mg_ha, .pred))
+```
+
+## 9. Predicted vs Observed Plot
+
+```{r}
+preds_in_range <- 
+  final_fit %>%
+  collect_predictions() %>%
+  filter(
+    between(yield_mg_ha, 20, 40),
+    between(.pred,        20, 40),
+    !is.na(.pred)
+  )
+
+ggplot(preds_in_range, aes(x = yield_mg_ha, y = .pred)) +
+  geom_point() +
+  geom_abline() +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  # now limits aren’t needed, since everything is already in [20,40]:
+  labs(
+    x = "Observed Yield (Mg ha⁻¹)",
+    y = "Predicted Yield (Mg ha⁻¹)",
+    title = "Observed vs. Predicted Cotton Yield"
+  )
+
+```
+
+## 10. Variable Importance
+
+```{r}
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+         data = bake(ml_prep, train_data)) %>% 
+    vi() %>%
+  mutate(
+    Variable = fct_reorder(Variable, 
+                           Importance)
+  ) %>%
+  ggplot(aes(x = Importance, 
+             y = Variable)) +
+  geom_col() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL)
+```
+
+#Summary
+
+
+
+
+
+#------------------------------------------------------------------------------------------
+# Model-2: Multilayer Perceptron (MLP)
+#------------------------------------------------------------------------------------------
+
+Here we are using the same numerical data set that we prepared above.
+
+
+##1. Loading earler prepared data
+```{r}
+## 1. Load and prepare data for MLP
+final_merged_mlp = final_merged %>%
+  mutate(
+    pHom       = as.numeric(pHom),
+    `soilpH^2` = as.numeric(`soilpH^2`),
+    `om_pct^2` = as.numeric(`om_pct^2`)
+  )
+
+
+mlp_data = final_merged_mlp %>%
+  select(
+    -year, -site, -replicate, -block,
+    -date_planted, -date_harvested, -dayl_s
+  )
+
+mlp_data
+```
+
+
+```{r}
+glimpse(mlp_data)
+```
+
+
+## 2. Data Split 
+```{r}
+#70/30 train/test split (stratified on yield)
+
+set.seed(2053)
+
+mlp_split    <- initial_split(mlp_data, prop = 0.7, strata = yield_mg_ha)
+train_data_mlp <- training(mlp_split)
+test_data_mlp  <- testing(mlp_split)
+
+```
+
+
+```{r distribution of target}
+# Check target distribution in train and test
+train_data_mlp %>% 
+  summarise(mean = mean(yield_mg_ha), sd = sd(yield_mg_ha))
+
+test_data_mlp %>% 
+  summarise(mean = mean(yield_mg_ha), sd = sd(yield_mg_ha))
+```
+## 3. Recipe for the MLP
+- dummy-code categorical predictors
+- normalize numeric predictors
+
+```{r}
+# Build a recipe for the MLP
+
+mlp_recipe = recipe(yield_mg_ha ~ ., data = train_data_mlp) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+# Preview preprocessed training data
+```{r}
+mlp_recipe %>% 
+  prep() %>% 
+  juice() %>% 
+  select(1:5)
+
+```
+
+# 4.  MLP model and hyperparameters
+```{r}
+
+# 4.  Specify the MLP model with tunable hyperparameters
+mlp_spec <- mlp(
+  hidden_units = tune(),  # # of neurons in hidden layer (size)
+  penalty      = tune(),  # weight decay (decay)
+  epochs       = tune()   # training iterations (maxit)
+) %>%
+  set_engine("nnet", trace = FALSE, MaxNWts = 20000) %>%
+  set_mode("regression")
+
+```
+
+
+# 5.  MLP workflow
+```{r}
+#Creating MLP workflow
+mlp_wf = workflow() %>%
+  add_recipe(mlp_recipe) %>%
+  add_model(mlp_spec)
+
+```
+
+
+# 6.  Cross validation setup (10-fold)
+```{r}
+
+set.seed(2053)
+cv_folds_mlp = vfold_cv(train_data_mlp, v = 10, strata = yield_mg_ha)
+```
+
+
+# 7.  Hyperparameter grid 
+```{r}
+
+# Extract tuning parameters using hardhat
+mlp_params <- hardhat::extract_parameter_set_dials(mlp_spec) %>%
+  update(
+    hidden_units = hidden_units(range = c(5, 100)),
+    penalty      = penalty(range = c(0, 1)),
+    epochs       = epochs(range = c(50, 200))
+  )
+# Use space-filling grid for better coverage
+mlp_grid <- grid_space_filling(
+  x    = mlp_params,
+  size = 20,
+  method = "maximin"
+)
+
+```
+
+
+# 8.  Hyperparameters tuning in parallel
+```{r}
+
+registerDoParallel(cores = parallel::detectCores() - 1)
+set.seed(2053)
+mlp_tune <- tune_grid(
+  mlp_wf,
+  resamples = cv_folds_mlp,
+  grid      = mlp_grid,
+  metrics   = metric_set(rmse, rsq),
+  control   = control_grid(save_pred = TRUE)
+)
+stopImplicitCluster()
+beepr::beep()
+
+# View tuning results
+mlp_tune %>%
+  collect_metrics() %>%
+  arrange(mean)
+```
+
+
+```{r}
+# 9. Select best hyperparameters by RMSE
+
+best_params = select_best(mlp_tune, metric = "rmse")
+best_params
+
+```
+
+
+```{r Tuning result}
+# 10. Finalize workflow with best parameters
+# ───────────────────────────────────────────────────────────────────────────────
+final_wf = finalize_workflow(mlp_wf, best_params)
+```
+
+
+```{r}
+# 11. Fit final model on training set & evaluate on test set
+# ───────────────────────────────────────────────────────────────────────────────
+set.seed(123)
+final_res = last_fit(final_wf, split = mlp_split)
+
+# Test-set performance
+final_res %>% collect_metrics()
+
+# Test-set predictions
+preds = final_res %>% collect_predictions()
+```
+
+
+```{r}
+# 12. Plot Observed vs. Predicted
+# ───────────────────────────────────────────────────────────────────────────────
+ggplot(preds, aes(x = yield_mg_ha, y = .pred)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    x     = "Observed Yield (Mg ha⁻¹)",
+    y     = "Predicted Yield (Mg ha⁻¹)",
+    title = "MLP: Observed vs. Predicted Cotton Yield"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+# 13. (Optional) Inspect training-set performance
+# ───────────────────────────────────────────────────────────────────────────────
+train_fit = final_wf %>% fit(data = training(mlp_split))
+train_preds = predict(train_fit, new_data = training(mlp_split)) %>%
+  bind_cols(training(mlp_split))
+
+train_metrics = train_preds %>%
+  rmse(truth = yield_mg_ha, estimate = .pred) %>%
+  bind_rows(train_preds %>% rsq(truth = yield_mg_ha, estimate = .pred))
+
+train_metrics
+```
+
+
