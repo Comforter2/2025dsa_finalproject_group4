@@ -1,12 +1,25 @@
 ---
-title: "Ashbin"
-format: html
-editor: visual
+title: "Award-Winning Cotton Yield Prediction Workflow"
+author: "Ashbin Bhat"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: united
 ---
 
 ```{r}
-# Global options
-knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE)
+# =============================================================================
+#  Environment Setup
+# =============================================================================
+# 1. Clear workspace
+rm(list = ls())
+```
+
+```{r}
+# 2. Set seed for reproducibility
+set.seed(1996)
 ```
 
 #Loading libraries
@@ -65,275 +78,210 @@ library (skimr)         # For a quick skim/summary of the data
 library(DataExplorer) # For EDA
 ```
 
-# Preparation before coding
+# 1.Data Import and Merging
 ```{r}
-# Parallel plan: use all CPU cores minus one
-plan(multisession, workers = parallel::detectCores() - 1)
-set.seed(1996)
+# -----------------------------------------------------------------------------
+# 1.1 Read and aggregate daily weather to per-year/site
+# -----------------------------------------------------------------------------
+weather_daily <- read_csv("data/training/weather_data.csv")
 
-```
+weather_yearly <- weather_daily %>%
+  group_by(year, site) %>%
+  summarise(
+    across(dayl_s:vp_pa, ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  )
 
-------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 1.2 Read trait, soil, and meta datasets
+# -----------------------------------------------------------------------------
+trait <- read_csv("data/training/training_trait.csv")
 
-```{r 1.Import & merge}
-# Raw files
-t_meta = read_csv("data/training/training_meta.csv")
-t_traits   = read_csv("data/training/training_trait.csv")
-t_soil   = read_csv("data/training/training_soil.csv")
+soil <- read_csv("data/training/training_soil.csv") %>%
+  mutate(site = sub("_\\d{4}$", "", site))  # remove year suffix
 
-# Clean meta & soil
-meta <- t_meta %>% distinct(year, site, .keep_all = TRUE)
-soil <- t_soil %>% mutate(site = sub("_\\d+$", "", site))
+meta <- read_csv("data/training/training_meta.csv") %>%
+  select(year, site, previous_crop, longitude, latitude)
 
-# Merge
-raw_data <- t_traits %>%
-  left_join(meta, by = c("year", "site")) %>%
-  left_join(soil, by = c("year", "site")) %>%
-  filter(!is.na(longitude), !is.na(latitude))
-
-#view(raw_data)
-
-```
-
-```{r 2.EDA}
-glimpse(raw_data)
-summary(raw_data)
-gg_miss_var(raw_data) + labs(title = "Missing values per variable")
-
-```
-
-```{r 3.Feature engineering}
-data_feat = raw_data %>%
+# -----------------------------------------------------------------------------
+# 1.3 Merge all into one cleaned dataframe
+# -----------------------------------------------------------------------------
+full_df <- trait %>%
+  left_join(weather_yearly, by = c("year", "site")) %>%
+  left_join(soil,          by = c("year", "site")) %>%
+  left_join(meta,          by = c("year", "site")) %>%
+  # Parse dates and engineer Days After Planting (DAP)
   mutate(
-    date_planted    = mdy(date_planted),
-    date_harvested  = mdy(date_harvested),
-    days_to_harvest = as.numeric(date_harvested - date_planted)
+    date_planted   = mdy(date_planted),
+    date_harvested = mdy(date_harvested),
+    DAP            = as.numeric(date_harvested - date_planted)
   ) %>%
-  select(-date_planted, -date_harvested)
+  drop_na()  # drop any remaining missing values
 
-#view(data_feat)
-
-```
-
-```{r 4.Select ML predictors}
-ml_data <- data_feat %>%
-  select(-year, -site, -replicate, -block, -hybrid, -previous_crop)
-
-
-#view(ml_data)
-```
-
-```{r 5 Handle missing values}
-# A) Drop all rows with any NA
-#ml_data_clean = ml_data %>% drop_na()
-
-#B) Median/mode imputation to prevent data loss
-num_vars <- ml_data %>% select(where(is.numeric)) %>% names()
-cat_vars <- ml_data %>% select(where(~ !is.numeric(.))) %>% names()
-get_mode <- function(x) { ux <- unique(x); ux[which.max(tabulate(match(x, ux)))] }
-ml_data_clean <- ml_data %>%
-mutate(across(all_of(num_vars), ~ if_else(is.na(.), median(., na.rm=TRUE), .))) %>%
-mutate(across(all_of(cat_vars), ~ if_else(is.na(.), get_mode(.), .)))
-
-#view(ml_data_clean)
-```
-
-```{r 6.Train/Test split}
-split_obj  <- initial_split(ml_data_clean, prop = 0.8, strata = yield_mg_ha)
-train_data <- training(split_obj)
-test_data  <- testing(split_obj)
+# Preview
+glimpse(full_df)
 
 ```
+#2. Exploratory Data Analysis
+```{r}
+# -----------------------------------------------------------------------------
+# 2.1 Summary statistics
+# -----------------------------------------------------------------------------
+skimr::skim(full_df)
 
-```{r 7.Preprocessing recipe}
-rec <- recipe(yield_mg_ha ~ ., data = train_data) %>%
+# -----------------------------------------------------------------------------
+# 2.2 Boxplots for key numeric predictors
+# -----------------------------------------------------------------------------
+numeric_vars <- full_df %>% select(
+  precp = prcp_mm_day, srad = srad_w_m_2,
+  tmax = tmax_deg_c, tmin = tmin_deg_c,
+  soilpH, om_pct, pk, DAP
+)
+
+numeric_vars_long <- numeric_vars %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value")
+
+ggplot(numeric_vars_long, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(title = "Distribution of Numeric Predictors",
+       x = NULL, y = "Value")
+
+```
+#3. Feature Engineering & Recipe
+```{r}
+# -----------------------------------------------------------------------------
+# 3.1 Train/Test Split
+# -----------------------------------------------------------------------------
+data_split <- initial_split(full_df, prop = 0.7, strata = yield_mg_ha)
+train_df    <- training(data_split)
+test_df     <-  testing(data_split)
+
+# -----------------------------------------------------------------------------
+# 3.2 Build preprocessing recipe
+# -----------------------------------------------------------------------------
+cotton_recipe <- recipe(yield_mg_ha ~ ., data = train_df) %>%
+  # Remove identifiers and raw dates
+  step_rm(year, site, replicate, block, date_planted, date_harvested) %>%
+  # Impute any remaining numeric missing values with median
   step_impute_median(all_numeric_predictors()) %>%
-  step_impute_mode(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors()) %>%
-  step_dummy(all_nominal_predictors())
+  # Create Growing Degree Days (GDD) feature
+  step_mutate(GDD = pmax((tmax_deg_c + tmin_deg_c) / 2 - 10, 0)) %>%
+  # Encode categorical variables
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  # Remove highly correlated numeric predictors
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>%
+  # Normalize all numeric predictors
+  step_normalize(all_numeric_predictors())
+
+# Preview recipe
+cotton_recipe %>% prep() %>% juice() %>% glimpse()
 
 ```
 
-```{r 8.XGBoost Specification}
-
+#4. Model Specification & Tuning
+```{r}
+# -----------------------------------------------------------------------------
+# 4.1 Specify XGBoost regression model with tunable parameters
+# -----------------------------------------------------------------------------
 xgb_spec <- boost_tree(
   trees          = tune(),
   tree_depth     = tune(),
+  min_n          = tune(),
   learn_rate     = tune(),
-  loss_reduction = tune(),
-  sample_size    = tune(),
-  mtry           = tune()
+  sample_size    = tune(),  # subsample ratio
+  mtry           = tune(),  # predictors sampled per tree
+  loss_reduction = tune()   # gamma
 ) %>%
-  set_engine(
-    engine  = "xgboost",
-    nthread = parallel::detectCores() - 1
-  ) %>%
+  set_engine("xgboost", objective = "reg:squarederror") %>%
   set_mode("regression")
 
-```
+# -----------------------------------------------------------------------------
+# 4.2 Assemble workflow
+# -----------------------------------------------------------------------------
+cotton_wf <- workflow() %>%
+  add_model(xgb_spec) %>%
+  add_recipe(cotton_recipe)
 
-```{r 9.Tuning grid & resamples}
-# for reproducibility
-set.seed(1996)
+# -----------------------------------------------------------------------------
+# 4.3 Resampling strategy: 5-fold CV repeated 3 times
+# -----------------------------------------------------------------------------
+cv_splits <- vfold_cv(train_df, v = 5, repeats = 3)
 
-
-# Re-sampling
-#──────────────────────────────────────────────────────────────────────────────
-folds   <- vfold_cv(train_data, v = 5, strata = yield_mg_ha)
-
-# Parameter space 
-#──────────────────────────────────────────────────────────────────────────────
-xgb_params <- parameters(xgb_spec) %>%
-  update(
-    trees          = trees(c(500, 2000)),
-    tree_depth     = tree_depth(c(3, 10)),
-    learn_rate     = learn_rate(c(0.001, 0.3)),
-    loss_reduction = loss_reduction(c(0, 10)),
-    sample_size    = sample_prop(c(0.5, 1)),
-    mtry           = mtry(c(5, 50))
-  )
-
-xgb_grid <- grid_latin_hypercube(xgb_params, size = 100)
-
-
-# Workflow
-#──────────────────────────────────────────────────────────────────────────────
-xgb_wf <- workflow() %>%
-  add_recipe(rec) %>%
-  add_model(xgb_spec)
-
-# Metrics
-#──────────────────────────────────────────────────────────────────────────────
-metrics <- metric_set(rmse, rsq)
-
-
-```
-
-```{r 10.Tune in parallel, cache=TRUE}
-plan(multisession, workers = 1)
-
-tune_res <- tune_grid(
-  xgb_wf,
-  resamples = folds,
-  grid      = xgb_grid,
-  metrics   = metrics,
-  control   = control_grid(verbose = TRUE, allow_par = TRUE)
+# -----------------------------------------------------------------------------
+# 4.4 Bayesian tuning control
+# -----------------------------------------------------------------------------
+bayes_ctrl <- control_bayes(
+  verbose    = TRUE,
+  no_improve = 10,
+  save_pred  = TRUE
 )
 
-# If failures persist, inspect error notes:
-show_notes(tune_res)
+# -----------------------------------------------------------------------------
+# 4.5 Parallel backend
+# -----------------------------------------------------------------------------
+registerDoParallel(cores = parallel::detectCores() - 1)
+
+# -----------------------------------------------------------------------------
+# 4.6 Run Bayesian hyperparameter tuning
+# -----------------------------------------------------------------------------
+xgb_tuned <- tune_bayes(
+  cotton_wf,
+  resamples = cv_splits,
+  iter      = 30,
+  metrics   = metric_set(rmse, rsq),
+  control   = bayes_ctrl
+)
+
+# Stop parallel processing
+foreach::registerDoSEQ()
+
 ```
 
+
+#5. Finalize & Evaluate
 ```{r}
-#Dont use this
-# Register parallel backend
-#───────────────────────────────────────────────────────────────────────────────
-# Use one fewer core than available to keep your machine responsive
-#cores <- parallel::detectCores() - 1
-#cl    <- makePSOCKcluster(cores)
-#registerDoParallel(cl)
+# -----------------------------------------------------------------------------
+# 5.1 Select best parameters by RMSE
+# -----------------------------------------------------------------------------
+best_params <- select_best(xgb_tuned, "rmse")
 
+# 5.2 Finalize workflow
+final_wf <- finalize_workflow(cotton_wf, best_params)
 
-# Run the tuning in parallel
-#───────────────────────────────────────────────────────────────────────────────
-#tune_res <- tune_grid(
- # xgb_wf,
-  #resamples = folds,
-  #grid      = xgb_grid,
-  #metrics   = metrics,
-  #control   = control_grid(verbose = TRUE)
-#)
+# 5.3 Fit on training + evaluate on test fold
+final_fit <- last_fit(final_wf, split = data_split)
 
-# Shut down the cluster when you’re done
-#───────────────────────────────────────────────────────────────────────────────
-#stopCluster(cl)
-#registerDoSEQ()  # back to sequential
+# Collect metrics on hold-out set
+final_metrics <- final_fit %>% collect_metrics()
+print(final_metrics)
 
+# 5.4 Predictions vs Observed
+preds <- final_fit %>% collect_predictions()
 
-```
-
-```{r 11.Extract best params}
-# Extract best results (by RMSE or R²)
-#───────────────────────────────────────────────────────────────────────────────
-best_rmse <- select_best(tune_res, "rmse")
-best_rsq  <- select_best(tune_res, "rsq")
-```
-
-```{r 12.Final fit & evaluation}
-
-# RMSE‑tuned
-
-final_params   <- finalize_parameters(xgb_params, best_rmse)
-final_spec_rmse <- xgb_spec %>% finalize_model(final_params)
-
-final_wf_rmse <- workflow() %>%
-  add_recipe(rec) %>%
-  add_model(final_spec_rmse)
-
-final_fit_rmse <- final_wf_rmse %>% fit(data = train_data)
-
-preds_rmse <- predict(final_fit_rmse, test_data) %>%
-  bind_cols(test_data)
-
-preds_rmse %>% metrics(truth = yield_mg_ha, estimate = .pred)
-
+ggplot(preds, aes(x = yield_mg_ha, y = .pred)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(linetype = "dashed") +
+  labs(
+    title = "Observed vs. Predicted Cotton Yield",
+    x = "Observed Yield (Mg/ha)",
+    y = "Predicted Yield (Mg/ha)"
+  )
 
 ```
 
+#6. Variable Importance
 ```{r}
-## R Square‑tuned
-final_params_rsq <- finalize_parameters(xgb_params, best_rsq)
-final_spec_rsq   <- xgb_spec %>% finalize_model(final_params_rsq)
+# Fit final model on full training data
+final_model_fit <- fit(final_wf, data = train_df)
 
-final_wf_rsq <- workflow() %>%
-  add_recipe(rec) %>%
-  add_model(final_spec_rsq)
-
-final_fit_rsq <- final_wf_rsq %>% fit(data = train_data)
-
-preds_rsq <- predict(final_fit_rsq, test_data) %>%
-  bind_cols(test_data)
-
-preds_rsq %>% metrics(truth = yield_mg_ha, estimate = .pred)
-
-```
-
-```{r 13.Variable importance}
-
-# Actual vs Predicted (RMSE)
-ggplot(preds_rmse, aes(x = yield_mg_ha, y = .pred)) +
-  geom_abline(lty = 2, color = "grey50") +
-  geom_point(alpha = 0.4) +
-  labs(title = "RMSE‑tuned: Actual vs Predicted")
-
-# VIP for RMSE model
-vip(final_fit_rmse$fit, num_features = 20) +
-  labs(title = "Top 20 Predictors (RMSE model)")
-
-```
-
-# Save model
-
-```{r}
-saveRDS(final_fit_rmse, "xgb_final_model_rmse.rds")
-saveRDS(final_fit_rsq,  "xgb_final_model_rsq.rds")
+# Extract and plot variable importance
+vip::vip(final_model_fit$fit$fit, num_features = 15) +
+  labs(title = "Top 15 Variable Importances")
 
 ```
 
 
-```{r ** Predict on new test set **}
-#test_raw <- read_csv("data/testing/test_predictors.csv")
 
-test_preds <- test_raw %>%
-  mutate(
-    date_planted    = mdy(date_planted),
-    date_harvested  = mdy(date_harvested),
-    days_to_harvest = as.numeric(date_harvested - date_planted)
-  ) %>%
-  select(-date_planted, -date_harvested) %>%
-  # If using the RMSE model:
-  bind_cols(predict(final_fit_rmse, .)) 
 
-#write_csv(test_preds, "data/testing/test_predictions.csv")
 
-```
