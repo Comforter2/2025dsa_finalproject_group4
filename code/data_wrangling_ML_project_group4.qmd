@@ -256,7 +256,6 @@ gg_miss_var(train_data_w) +
 
 Since some previous crops are missing, we can fill them up with "Unknown" in codes above, then re-plot. Some soil data are still missing. We can leave them and use models that can handle NAs.
 
-
 ```{r export data file}
 
 #write_csv(train_data_w, "../data/training/meta_soil_traits_n.csv")
