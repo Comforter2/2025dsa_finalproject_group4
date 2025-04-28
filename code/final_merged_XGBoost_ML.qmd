@@ -248,13 +248,20 @@ ml_split
 
 ```{r train data}
 train_data = training(ml_split)  # 70% of data
-train_data 
+train_data %>%
+  select(-hybrid, -previous_crop, -site)
+
+write_csv(train_data, "../Shiny_APP/train_data.csv")
+
 ```
 
 ```{r test data}
 
 test_data = testing(ml_split)  # 30% of data
-test_data
+test_data %>%
+  select(-hybrid, -previous_crop, -site)
+
+write_csv(test_data, "../Shiny_APP/test_data.csv")
 
 ```
 
@@ -573,10 +580,6 @@ ggplot(preds_in_range, aes(x = yield_mg_ha, y = .pred)) +
 
 ```
 
-```{r}
-saveRDS(xgb_workflow, "../data/xgb_workflow.rds")
-```
-
 
 ## 10. Variable Importance
 
@@ -595,6 +598,21 @@ final_spec %>%
   scale_x_continuous(expand = c(0, 0)) +
   labs(y = NULL)
 ```
+
+```{r shiny app model}
+# After you’ve picked best_r2:
+final_wf   <- workflow() %>%
+                add_recipe(ml_recipe) %>%
+                add_model(final_spec) %>%
+                finalize_workflow(best_r2)
+
+# Fit on train data
+fitted_full <- fit(final_wf, data = train_data)
+
+# Save that for production
+saveRDS(fitted_full, "../Shiny_APP/xgb_full_data_workflow.rds")
+```
+
 
 #Summary
 
