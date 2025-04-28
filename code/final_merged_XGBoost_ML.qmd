@@ -97,7 +97,10 @@ weather_mean = read_csv("../data/training/weather_data.csv") %>%
   )
 
 # Read trait data
-trait = read_csv("../data/training/training_trait.csv")
+trait = read_csv("../data/training/training_trait.csv") %>%
+  mutate(yield_mg_ha = yield_mg_ha * 
+           ((100 - grain_moisture) / (100 - 15.5))) %>%
+  select(-grain_moisture)
 
 # Join trait with averaged weather
 trait_weather = left_join(trait, weather_mean, by = c("year", "site"))
@@ -160,7 +163,7 @@ num_cols = c(
   "prcp_mm_day","srad_w_m_2","swe_kg_m_2",
   "tmax_deg_c","tmin_deg_c","vp_pa",
   "soilpH","om_pct","soilk_ppm","soilp_ppm",
-  "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk","DAP", "grain_moisture", "yield_mg_ha"
+  "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk","DAP", "yield_mg_ha"
 )
 
 merged_factored = merged_factored %>%

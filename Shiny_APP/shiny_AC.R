@@ -12,6 +12,7 @@ library(tidymodels)   # initial_split, recipe, workflows, metrics
 library(vip)          # variable importance
 library(yardstick)    # rmse, rsq
 library(PerformanceAnalytics)  # for chart.Correlation()
+library(markdown)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 0. GLOBAL SETUP
@@ -26,7 +27,7 @@ soil_vars    <- c("soilpH","om_pct","soilk_ppm","soilp_ppm",
                   "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk")
 weather_vars <- c("prcp_mm_day","srad_w_m_2","swe_kg_m_2",
                   "tmax_deg_c","tmin_deg_c","vp_pa")
-other_vars   <- c("DAP","grain_moisture","longitude","latitude")
+other_vars   <- c("DAP","longitude","latitude")
 cat_vars     <- c("site","hybrid","previous_crop")
 all_vars     <- c(soil_vars, weather_vars, other_vars, cat_vars)
 
@@ -37,7 +38,7 @@ num_vars <- merged %>% select(all_of(c(soil_vars, weather_vars, other_vars)))
 # 1. UI DEFINITION
 # ───────────────────────────────────────────────────────────────────────────────
 ui <- dashboardPage(
-  dashboardHeader(title = "Cotton Yield Explorer"),
+  dashboardHeader(title = "Corn Yield Explorer"),
   dashboardSidebar(
     sidebarMenu(id = "tabs",
                 menuItem("Overview",    tabName = "overview",    icon = icon("chart-bar")),
@@ -61,6 +62,9 @@ ui <- dashboardPage(
       # ─── Overview ───────────────────────────────────────────────────────────
       tabItem("overview",
               fluidRow(
+                box(
+                  title = "Maize Yield Prediction Using Machine Learning (Group 4)", width = 12, status = "info", solidHeader = TRUE,
+                  includeMarkdown("README.md")),
                 box(title = "Yield Histogram (Train)", status = "primary", solidHeader = TRUE,
                     width = 6, plotlyOutput("overview_hist")),
                 box(title = "Correlation Matrix + Scatter + Hist", status = "primary", solidHeader = TRUE,
