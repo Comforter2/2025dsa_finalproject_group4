@@ -1,5 +1,7 @@
 # app.R
 
+#Note: This shiny dashboard was made using the help from OpenAI (ChatGPT)
+
 # ───────────────────────────────────────────────────────────────────────
 # Loading Libraries
 # ───────────────────────────────────────────────────────────────────────
