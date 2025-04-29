@@ -653,6 +653,9 @@ mlp_split    = initial_split(mlp_data,
 train_data_mlp = training(mlp_split)
 test_data_mlp  = testing(mlp_split)
 
+write_csv(train_data_mlp, "../Shiny_APP/train_data_mlp.csv")
+write_csv(test_data_mlp, "../Shiny_APP/test_data_mlp.csv")
+
 ```
 
 ```{r distribution of target}
@@ -784,7 +787,8 @@ best_params_nnet = best_nnet %>%
 # 10. Finalize workflow & last_fit
 final_wf_nnet = finalize_workflow(mlp_wf_nnet, best_params_nnet)
 
-
+# Save that for production
+saveRDS(final_wf_nnet, "../Shiny_APP/mlp_full_data_workflow.rds")
 ```
 
 ```{r}

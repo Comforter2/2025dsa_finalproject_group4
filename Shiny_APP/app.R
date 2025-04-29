@@ -48,6 +48,7 @@ library(xgboost)           # XGBoost gradient boosting
 library(ranger)            # Fast Random Forests
 library(nnet)              # Neural Networks
 library(caret)             # Traditional machine learning workflows
+library(NeuralNetTools)
 
 # Metrics and Model Evaluation
 library(yardstick)         # Evaluation metrics (RMSE, MAE, R²)
@@ -73,12 +74,14 @@ options(shiny.sanitize.errors = FALSE)
 # ───────────────────────────────────────────────────────────────────────────────
 
 merged = read_csv("merged_factored.csv")
-train_data = read_csv("train_data.csv")
-test_data = read_csv("test_data.csv")
-fitted_xgb_wf = read_rds("xgb_full_data_workflow.rds")
+train_data = read_csv("train_data_mlp.csv")
+test_data = read_csv("test_data_mlp.csv")
+fitted_mlp_wf = read_rds("mlp_full_data_workflow.rds")
+
+fitted_mlp_wf <- fit(fitted_mlp_wf, data = train_data)
 
 soil_vars = c("soilpH","om_pct","soilk_ppm","soilp_ppm",
-              "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk")
+              "pHom","soilpH^2","om_pct^2","p+k","norm_pk")
 weather_vars = c("prcp_mm_day","srad_w_m_2","swe_kg_m_2",
                  "tmax_deg_c","tmin_deg_c","vp_pa")
 all_vars = c(soil_vars, weather_vars)
@@ -225,8 +228,8 @@ server = function(input, output, session) {
   
   # Variable importance with explicit fit extraction + validation
   vip_df = reactive({
-    req(fitted_xgb_wf)
-    fit_obj = extract_fit_parsnip(fitted_xgb_wf)
+    req(fitted_mlp_wf)
+    fit_obj = extract_fit_parsnip(fitted_mlp_wf)
     vi(fit_obj) %>%
       arrange(desc(Importance)) %>%
       slice_head(n = input$vip_n)
@@ -247,8 +250,8 @@ server = function(input, output, session) {
   
   # Predictions reactive
   preds = reactive({
-    req(fitted_xgb_wf, test_data)
-    predict(fitted_xgb_wf, new_data = test_data) %>%
+    req(fitted_mlp_wf, test_data)
+    predict(fitted_mlp_wf, new_data = test_data) %>%
       bind_cols(test_data)
   })
   
@@ -262,7 +265,7 @@ server = function(input, output, session) {
     print(names(df))  # inspect column names in console
     p = ggplot(df, aes(x = yield_mg_ha, y = .pred)) +
       geom_point(alpha = 0.6) +
-      geom_abline(slope = 1, intercept = 0, color = "red", size = 1) +
+      geom_smooth(method = "lm", formula = y ~ x) +
       labs(
         x = "Observed Yield (Mg/ha)",
         y = "Predicted Yield (Mg/ha)",

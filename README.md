@@ -28,18 +28,18 @@ we have deployed an interactive Shiny dashboard for exploration and prediction.
 
 4. **Model Selection**  
    - Evaluated on stratified 70/30 train/test splits using RMSE and R².  
-   - XGBoost emerged as the top performer and serves as our production model.
+   - Multilayer Perceptron (MLP) emerged as the top performer and serves as our production model.
 
 ---
 
 ## Results
 
 - **XGBoost Test Performance**  
-  - R²: *[insert value]*  
-  - RMSE: *[insert value]*  
+  - R²: *[0.50]*  
+  - RMSE: *[5.75]*  
 - **MLP (nnet) Test Performance**  
-  - R²: *[insert value]*  
-  - RMSE: *[insert value]*  
+  - R²: *[0.50]*  
+  - RMSE: *[1.88]*  
 
 ---
 

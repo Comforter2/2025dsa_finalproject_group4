@@ -23,7 +23,7 @@ Early experimentation included two modeling approaches:
 2. **XGBoost**  
    A gradient-boosted tree model.  
 
-After rigorous cross-validation and hyperparameter tuning, the **XGBoost model** emerged as our best performer 
+After rigorous cross-validation and hyperparameter tuning, the **Multilayer Perceptron (MLP) model** emerged as our best performer 
 in terms of both R² and RMSE. It therefore serves as the production engine in this app.
 
 ---
