@@ -1,7 +1,7 @@
-# app.R
+# shiny app.R
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 0. LOAD LIBRARIES
+# Loading Libraries
 # ───────────────────────────────────────────────────────────────────────────────
 library(shiny)
 library(shinydashboard)
@@ -15,7 +15,7 @@ library(PerformanceAnalytics)  # for chart.Correlation()
 library(markdown)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 0. GLOBAL SETUP
+# Setup
 # ───────────────────────────────────────────────────────────────────────────────
 
 # 0.1 Load data & pre‐fitted workflow (adjust paths accordingly)
@@ -35,7 +35,7 @@ all_vars     <- c(soil_vars, weather_vars, other_vars, cat_vars)
 num_vars <- merged %>% select(all_of(c(soil_vars, weather_vars, other_vars)))
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 1. UI DEFINITION
+# UI Interface
 # ───────────────────────────────────────────────────────────────────────────────
 ui <- dashboardPage(
   dashboardHeader(title = "Corn Yield Explorer"),
@@ -103,7 +103,7 @@ ui <- dashboardPage(
 )
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 2. SERVER LOGIC
+# 2. Server
 # ───────────────────────────────────────────────────────────────────────────────
 server <- function(input, output, session) {
   
@@ -197,6 +197,6 @@ server <- function(input, output, session) {
 }
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 3. RUN THE APP
+# 3. Run the app
 # ───────────────────────────────────────────────────────────────────────────────
 shinyApp(ui, server)
