@@ -13,31 +13,32 @@ library(vip)          # variable importance
 library(yardstick)    # rmse, rsq
 library(PerformanceAnalytics)  # for chart.Correlation()
 library(markdown)
+library(rsconnect)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Setup
 # ───────────────────────────────────────────────────────────────────────────────
 
-# 0.1 Load data & pre‐fitted workflow (adjust paths accordingly)
-merged         <- read_csv("test_data.csv")
-fitted_xgb_wf  <- read_rds("xgb_full_data_workflow.rds")
+# Load data & pre‐fitted workflow (adjust paths accordingly)
+merged = read_csv("test_data.csv")
+fitted_xgb_wf = read_rds("xgb_full_data_workflow.rds")
 
-# 0.3 Predictor groups
-soil_vars    <- c("soilpH","om_pct","soilk_ppm","soilp_ppm",
-                  "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk")
-weather_vars <- c("prcp_mm_day","srad_w_m_2","swe_kg_m_2",
-                  "tmax_deg_c","tmin_deg_c","vp_pa")
-other_vars   <- c("DAP","longitude","latitude")
-cat_vars     <- c("site","hybrid","previous_crop")
-all_vars     <- c(soil_vars, weather_vars, other_vars, cat_vars)
+# Predictor groups
+soil_vars    = c("soilpH","om_pct","soilk_ppm","soilp_ppm",
+                 "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk")
+weather_vars = c("prcp_mm_day","srad_w_m_2","swe_kg_m_2",
+                 "tmax_deg_c","tmin_deg_c","vp_pa")
+other_vars   = c("DAP","longitude","latitude")
+cat_vars     = c("site","hybrid","previous_crop")
+all_vars     = c(soil_vars, weather_vars, other_vars, cat_vars)
 
 # Prepare numeric-only data for correlation matrix
-num_vars <- merged %>% select(all_of(c(soil_vars, weather_vars, other_vars)))
+num_vars = merged %>% select(all_of(c(soil_vars, weather_vars, other_vars)))
 
 # ───────────────────────────────────────────────────────────────────────────────
 # UI Interface
 # ───────────────────────────────────────────────────────────────────────────────
-ui <- dashboardPage(
+ui = dashboardPage(
   dashboardHeader(title = "Corn Yield Explorer"),
   dashboardSidebar(
     sidebarMenu(id = "tabs",
@@ -103,21 +104,21 @@ ui <- dashboardPage(
 )
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 2. Server
+# Server
 # ───────────────────────────────────────────────────────────────────────────────
-server <- function(input, output, session) {
+server = function(input, output, session) {
   
   # Overview histogram
-  output$overview_hist <- renderPlotly({
-    p <- ggplot(train_data, aes(x = yield_mg_ha)) +
-      geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  output$overview_hist = renderPlotly({
+    p = ggplot(train_data, aes(x = yield_mg_ha)) +
+      geom_histogram(bins = 30, fill = "darkred", color = "white") +
       labs(x = "Yield (Mg/ha)", y = "Count") +
       theme_minimal()
     ggplotly(p)
   })
   
   # Correlation matrix + scatter + histogram
-  output$corr_matrix <- renderPlot({
+  output$corr_matrix = renderPlot({
     chart.Correlation(
       num_vars,
       histogram = TRUE,
@@ -127,8 +128,8 @@ server <- function(input, output, session) {
   })
   
   # EDA: Yield histogram (second)
-  output$hist2_yield <- renderPlotly({
-    p <- ggplot(train_data, aes(x = yield_mg_ha)) +
+  output$hist2_yield = renderPlotly({
+    p = ggplot(train_data, aes(x = yield_mg_ha)) +
       geom_histogram(bins = input$eda_bins, fill = "darkorange", color = "white") +
       labs(x = "Yield (Mg/ha)", y = "Count") +
       theme_minimal()
@@ -136,15 +137,15 @@ server <- function(input, output, session) {
   })
   
   # EDA: Predictor vs. Yield
-  output$eda_plot <- renderPlotly({
-    var <- input$eda_var
+  output$eda_plot = renderPlotly({
+    var = input$eda_var
     if (var %in% c(soil_vars, weather_vars, other_vars)) {
-      p <- ggplot(train_data, aes_string(x = var, y = "yield_mg_ha")) +
+      p = ggplot(train_data, aes_string(x = var, y = "yield_mg_ha")) +
         geom_point(alpha = 0.6) +
         geom_smooth(method = "lm", se = FALSE, color = "darkred") +
         theme_minimal()
     } else {
-      p <- ggplot(train_data, aes_string(x = var, y = "yield_mg_ha")) +
+      p = ggplot(train_data, aes_string(x = var, y = "yield_mg_ha")) +
         geom_boxplot(fill = "skyblue") +
         theme_minimal()
     }
@@ -152,51 +153,55 @@ server <- function(input, output, session) {
   })
   
   # Model VIP
-  vip_df <- reactive({
-    fit_obj <- pull_workflow_fit(fitted_xgb_wf)$fit
+  vip_df = reactive({
+    fit_obj = pull_workflow_fit(fitted_xgb_wf)$fit
     vi(fit_obj) %>%
       arrange(desc(Importance)) %>%
       slice_head(n = input$vip_n)
   })
-  output$vip_plot <- renderPlotly({
-    df <- vip_df()
-    p <- ggplot(df, aes(x = Importance, y = fct_reorder(Variable, Importance))) +
+  output$vip_plot = renderPlotly({
+    df = vip_df()
+    p = ggplot(df, aes(x = Importance, y = fct_reorder(Variable, Importance))) +
       geom_col(fill = "tomato") +
       theme_minimal()
     ggplotly(p)
   })
   
   # Predictions
-  preds <- reactive({
+  preds = reactive({
     predict(fitted_xgb_wf, test_data) %>%
       bind_cols(test_data)
   })
-  output$obs_pred <- renderPlotly({
-    df <- preds()
-    p <- ggplot(df, aes(x = yield_mg_ha, y = .pred)) +
+  output$obs_pred = renderPlotly({
+    df = preds()
+    p = ggplot(df, aes(x = yield_mg_ha, y = .pred)) +
       geom_point(alpha = 0.6) +
-      geom_abline(linetype = "dashed") +
+      geom_abline(
+        slope = 1, intercept = 0,
+        color = "red",
+        size  = 1.5
+      ) +
       theme_minimal()
     ggplotly(p)
   })
   
   # R² & RMSE value boxes
-  metric_vals <- reactive({
+  metric_vals = reactive({
     preds() %>%
       metrics(truth = yield_mg_ha, estimate = .pred) %>%
       filter(.metric %in% c("rsq","rmse"))
   })
-  output$box_r2 <- renderValueBox({
-    r2 <- metric_vals() %>% filter(.metric=="rsq")   %>% pull(.estimate)
+  output$box_r2 = renderValueBox({
+    r2 = metric_vals() %>% filter(.metric=="rsq")   %>% pull(.estimate)
     valueBox(round(r2,3), "R² (Test)", icon = icon("chart-line"), color = "green")
   })
-  output$box_rmse <- renderValueBox({
-    rm <- metric_vals() %>% filter(.metric=="rmse") %>% pull(.estimate)
+  output$box_rmse = renderValueBox({
+    rm = metric_vals() %>% filter(.metric=="rmse") %>% pull(.estimate)
     valueBox(round(rm,3), "RMSE (Test)", icon = icon("tachometer-alt"), color = "blue")
   })
 }
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 3. Run the app
+# Run the app
 # ───────────────────────────────────────────────────────────────────────────────
-shinyApp(ui, server)
+shinyApp(ui = ui, server = server)
