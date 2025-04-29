@@ -1,5 +1,5 @@
 ---
-title: "Final_merged_ML"
+title: "Final_XGBoost_MLP-NNET_Group4_Ashbin-Comfort"
 format: html
 editor: visual
 ---
@@ -127,11 +127,7 @@ final_merged = tw_sm_meta %>%
   drop_na()%>%
   select(-year, -replicate, -block, -dayl_s)
 
-# Write out the fully merged and cleaned CSV
-#write_csv(final, "merged_meta_trait_weather_soil_clean.csv")
 
-# Preview first rows
-#print(head(final))
 ```
 
 
