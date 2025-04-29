@@ -48,7 +48,7 @@ we have deployed an interactive Shiny dashboard for exploration and prediction.
 Explore the data, diagnostics, and predictions yourself:
 
 **Corn Yield Explorer Dashboard**  
-https://your-shiny-app-url.example.com
+https://j995vy-akb91318.shinyapps.io/Shiny_APP_Group4_Ashbin-Comfort/
 
 ---
 
