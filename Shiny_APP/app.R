@@ -81,11 +81,9 @@ soil_vars = c("soilpH","om_pct","soilk_ppm","soilp_ppm",
               "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk")
 weather_vars = c("prcp_mm_day","srad_w_m_2","swe_kg_m_2",
                  "tmax_deg_c","tmin_deg_c","vp_pa")
-other_vars = c("DAP","longitude","latitude")
-cat_vars = c("site","hybrid","previous_crop")
-all_vars = c(soil_vars, weather_vars, other_vars, cat_vars)
+all_vars = c(soil_vars, weather_vars)
 
-num_vars = merged %>% select(all_of(c(soil_vars, weather_vars, other_vars)))
+num_vars = merged %>% select(all_of(c(soil_vars, weather_vars)))
 
 # ───────────────────────────────────────────────────────────────────────────────
 # UI
@@ -212,7 +210,7 @@ server = function(input, output, session) {
   # EDA: predictor vs yield
   output$eda_plot = renderPlotly({
     var = input$eda_var
-    if (var %in% c(soil_vars, weather_vars, other_vars)) {
+    if (var %in% c(soil_vars, weather_vars)) {
       p = ggplot(train_data, aes_string(x = var, y = "yield_mg_ha")) +
         geom_point(alpha = 0.6) +
         geom_smooth(method = "lm", se = FALSE, color = "darkred") +

@@ -40,6 +40,7 @@ library(nnet)
 library(keras)
 library(hardhat)   # for extract_parameter_set_dials()
 library(dials)     # for hidden_units(), penalty(), dropout(), epochs()
+library(scales)
 
 
 # --- Modeling Engines ---
@@ -120,13 +121,22 @@ meta = read_csv("../data/training/training_meta.csv") %>%
   select(year, site, previous_crop, longitude, latitude)
 
 # Join meta into the combined dataset
-tw_sm_meta = left_join(tw_soil, meta, by = c("year", "site"))
+tw_sm_meta <- left_join(tw_soil, meta, by = c("year", "site")) %>%
+  # Convert character columns to numeric where needed
+  mutate(
+    pHom        = as.numeric(pHom),
+    `soilpH^2`  = as.numeric(`soilpH^2`),
+    `om_pct^2`  = as.numeric(`om_pct^2`)
+  ) 
+ 
 
 # Remove all rows with any missing values
 final_merged = tw_sm_meta %>%
   drop_na()%>%
-  select(-year, -replicate, -block, -dayl_s)
+  select(-year, - site, -replicate, -block, -dayl_s)
 
+#summary(final_merged)
+#glimpse(final_merged)
 
 ```
 
@@ -134,35 +144,33 @@ final_merged = tw_sm_meta %>%
 ```{r}
 
 # Feature engineering
-merged_clean <- final_merged %>%
+merged_clean = final_merged %>%
   mutate(
     date_planted   = mdy(date_planted),
-    date_harvested = mdy(date_harvested),
-    DAP            = as.numeric(date_harvested - date_planted) #Adding Days until harvest 
-  )%>% select(-date_harvested, -date_planted)
+    date_harvested = mdy(date_harvested)
+  )%>% select(-date_harvested, 
+              -date_planted, 
+              -longitude, 
+              -latitude, 
+              -pk, 
+              -previous_crop,
+              -hybrid)
 
 merged_clean
 
-# Factorize remaining categorical variables
-merged_factored = merged_clean %>%
-  mutate(
-    previous_crop = factor(previous_crop),
-    hybrid        = factor(hybrid),
-    site          = factor(site)
-  )
 
 # Write out the fully merged and cleaned CSV
-write_csv(merged_factored, "../Shiny_APP/merged_factored.csv")
+write_csv(merged_clean, "../Shiny_APP/merged_factored.csv")
 
 # Ensure numeric columns are numeric
 num_cols = c(
   "prcp_mm_day","srad_w_m_2","swe_kg_m_2",
   "tmax_deg_c","tmin_deg_c","vp_pa",
   "soilpH","om_pct","soilk_ppm","soilp_ppm",
-  "pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk","DAP", "yield_mg_ha"
+  "pHom","soilpH^2","om_pct^2","p+k","norm_pk", "yield_mg_ha"
 )
 
-merged_factored = merged_factored %>%
+merged_factored = merged_clean %>%
   mutate(across(all_of(num_cols), as.numeric))
 
 # Outlier inspection: boxplots for numeric predictors
@@ -196,7 +204,6 @@ corrplot(
   diag      = FALSE        # hide diagonal
 )
 
-
 # combined scatter + histogram + corr matrix view
 chart.Correlation(
   num_vars,
@@ -205,19 +212,6 @@ chart.Correlation(
   method       = "pearson"  # or "spearman"
 )
 
-
-# Chord Diagram of Strong Correlations 
-strong = ifelse(abs(corr_mat) > 0.7, corr_mat, 0)
-chordDiagram(strong, transparency = 0.5)
-
-
-#Interactive 3D correlation Surface
-plot_ly(
-  z = corr_mat,
-  x = colnames(corr_mat),
-  y = colnames(corr_mat),
-  type = "surface"
-)
 
 ```
 
@@ -228,7 +222,7 @@ plot_ly(
 ```{r }
 
 # Set seed for reproducibility
-set.seed(1996)
+set.seed(2053)
 
 # Create 70/30 train-test split, stratified by yield
 ml_split = initial_split(
@@ -247,8 +241,7 @@ ml_split
 
 ```{r train data}
 train_data = training(ml_split)  # 70% of data
-train_data %>%
-  select(-hybrid, -previous_crop, -site)
+train_data
 
 write_csv(train_data, "../Shiny_APP/train_data.csv")
 
@@ -257,8 +250,7 @@ write_csv(train_data, "../Shiny_APP/train_data.csv")
 ```{r test data}
 
 test_data = testing(ml_split)  # 30% of data
-test_data %>%
-  select(-hybrid, -previous_crop, -site)
+test_data 
 
 write_csv(test_data, "../Shiny_APP/test_data.csv")
 
@@ -301,15 +293,6 @@ library(workflows)   # for workflow()
 library(rsample)     # for vfold_cv()
 
 ml_recipe = recipe(yield_mg_ha ~ ., data = train_data) %>%
-    step_lencode_glm(
-    site, 
-    previous_crop, 
-    hybrid,
-    outcome = "yield_mg_ha"
-  ) %>%
-    # c) remove the *original* factor columns now that they've been encoded
-  step_rm(site, previous_crop, hybrid) %>%
-
   # d) drop any zero‐variance predictors (e.g. if a level never appeared in a resample)
   step_zv(all_predictors()) %>%
   # Center & scale all remaining predictors
@@ -323,9 +306,19 @@ ml_recipe
 ```
 
 ```{r}
+# Parallel processing
+registerDoParallel(cores = parallel::detectCores() - 1)
+
 # Prep the recipe to estimate any required statistics
 ml_prep = ml_recipe %>% 
-  prep()
+  prep(verbose = TRUE)
+
+# Stop parallel processing
+stopImplicitCluster()
+
+# Play a sound when done
+beepr::beep()
+
 
 # Examine preprocessing steps
 ml_prep
@@ -336,15 +329,21 @@ ml_prep
 ### a. Model specification
 
 ```{r XGBoost specs}
-# XGBoost regression model spec with hyperparameter tuning
+
+library(tidymodels)
+
 xgb_spec = boost_tree(
-  trees      = tune(),  # Total number of boosting iterations
-  tree_depth = tune(),  # Maximum depth of each tree
-  min_n      = tune(),  # Minimum number of samples required to split a node
-  learn_rate = tune()   # Step-size shrinkage (learning rate)
+  trees = tune(),           # Number of boosting iterations
+  tree_depth = tune(),      # Maximum depth of each tree
+  min_n = tune(),           # Minimum number of samples required to split a node
+  learn_rate = tune(),      # Step-size shrinkage (learning rate)
+  loss_reduction = tune(),  # Minimum loss reduction required to make a split
+  sample_size = tune(),     # Subsample ratio of the training instances
+  mtry = tune()             # Number of predictors sampled for each split
 ) %>%
-  set_engine("xgboost") %>%  # Specify the XGBoost backend
-  set_mode("regression")     # Fit a regression model
+  set_engine("xgboost", 
+  ) %>%
+  set_mode("regression")
 
 # Print the specification
 xgb_spec
@@ -354,10 +353,10 @@ xgb_spec
 ### b. Cross-validation setup
 
 ```{r 10-fold CV}
-set.seed(1996)
+set.seed(2053)
 
 resampling_foldcv = vfold_cv(train_data, 
-                             v = 5) #10-fold cross validation
+                             v = 10) #10-fold cross-validation
 
 resampling_foldcv
 resampling_foldcv$splits[[1]]
@@ -366,16 +365,24 @@ resampling_foldcv$splits[[1]]
 ### c. Hyperparameter grid with Latin Hypercube Sampling
 
 ```{r XGBoost grid}
+library(dials)
+
+# Assuming 'train_data' is your preprocessed training dataset
 xgb_grid = grid_latin_hypercube(
+  trees(),
   tree_depth(),
   min_n(),
   learn_rate(),
-  trees(),
-  size = 100
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), train_data),
+  size = 30  # Adjust the size based on computational resources
 )
 
 xgb_grid
 ```
+
+
 
 ```{r XGB grid visualization}
 ggplot(data = xgb_grid,
@@ -391,13 +398,13 @@ ggplot(data = xgb_grid,
 
 ```{r xgb_grid_result}
 #for reproducibility
-set.seed(1996)
+set.seed(2053)
 
 # Parallel processing
 registerDoParallel(cores = parallel::detectCores() - 1)
 
 # Perform grid search tuning
-xgb_res <- tune_grid(
+xgb_res = tune_grid(
   object = xgb_spec,
   preprocessor = ml_recipe, #providing recipe here
   resamples = resampling_foldcv, # providing re-sampling CV
@@ -515,7 +522,7 @@ final_spec
 ## Validation
 
 ```{r final_fit}
-set.seed(1996)
+set.seed(2053)
 final_fit = last_fit(final_spec,
                 ml_recipe,
                 split = ml_split)
@@ -568,8 +575,7 @@ preds_in_range =
 
 ggplot(preds_in_range, aes(x = yield_mg_ha, y = .pred)) +
   geom_point() +
-  geom_abline() +
-  geom_smooth(method = "lm", formula = y ~ x) +
+geom_smooth(method = "lm", formula = y ~ x) +
   # now limits aren’t needed, since everything is already in [20,40]:
   labs(
     x = "Observed Yield (Mg ha⁻¹)",
@@ -600,23 +606,20 @@ final_spec %>%
 
 ```{r shiny app model}
 # After you’ve picked best_r2:
-final_wf   <- workflow() %>%
+final_wf   = workflow() %>%
                 add_recipe(ml_recipe) %>%
                 add_model(final_spec) %>%
                 finalize_workflow(best_r2)
 
 # Fit on train data
-fitted_full <- fit(final_wf, data = train_data)
+fitted_full = fit(final_wf, data = train_data)
 
 # Save that for production
 saveRDS(fitted_full, "../Shiny_APP/xgb_full_data_workflow.rds")
 ```
 
 
-#Summary
-
-
-
+#------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------
 
 # Model-2: Multilayer Perceptron (MLP)
@@ -625,35 +628,12 @@ saveRDS(fitted_full, "../Shiny_APP/xgb_full_data_workflow.rds")
 
 Here we are using the same data set that we used above.
 
-```{r}
-# 0.  Load libraries
-library(tidymodels)   # recipes, workflows, tuning, etc.
-library(nnet)         # neural net engine
-library(doParallel)   # parallel backend control
-library(foreach)      # for registerDoSEQ()
-library(ggplot2)      # plotting
-library(dplyr)        # data manipulation
-library(beepr)        # optional beep
-```
-
 
 ##1. Loading earler prepared data
 
 ```{r}
 ## 1. Load and prepare data for MLP
-final_merged_mlp = merged_factored %>%
-  mutate(
-    pHom       = as.numeric(pHom),
-    `soilpH^2` = as.numeric(`soilpH^2`),
-    `om_pct^2` = as.numeric(`om_pct^2`)
-  ) %>% select(
-    -site,
-    -hybrid,
-    -previous_crop  
-  )
-
-
-mlp_data = final_merged_mlp 
+mlp_data = merged_factored 
 
 glimpse(mlp_data)
 ```
@@ -720,7 +700,7 @@ mlp_spec_nnet = mlp(
   set_engine(
     "nnet",
     trace   = FALSE,
-    MaxNWts = 10000          # allow plenty of weights
+    MaxNWts = 1000          # allow plenty of weights
   ) %>%
   set_mode("regression")
 
@@ -742,7 +722,7 @@ mlp_wf_nnet = workflow() %>%
 
 set.seed(2053)
 cv_folds_mlp = vfold_cv(train_data_mlp, 
-                        v = 10, 
+                        v =5, 
                         strata = yield_mg_ha)
 ```
 
@@ -757,7 +737,7 @@ mlp_params_nnet = hardhat::extract_parameter_set_dials(mlp_spec_nnet) %>%
 
 mlp_grid_nnet = grid_space_filling(
   x      = mlp_params_nnet,
-  size   = 20,
+  size   =30,
   method = "maximin"
 )
 
@@ -772,7 +752,7 @@ doParallel::stopImplicitCluster()
 foreach::registerDoSEQ() 
 
 set.seed(2053)
-mlp_tune_nnet <- tune_grid(
+mlp_tune_nnet = tune_grid(
   mlp_wf_nnet,
   resamples = cv_folds_mlp,
   grid      = mlp_grid_nnet,
@@ -781,15 +761,11 @@ mlp_tune_nnet <- tune_grid(
 )
 beepr::beep()
 
-# View tuning results
-#mlp_tune %>%
- # collect_metrics() %>%
-  #arrange(mean)
 ```
 
 ```{r}
 # Collect metrics
-metrics_nnet <- mlp_tune_nnet %>%
+metrics_nnet = mlp_tune_nnet %>%
   collect_metrics() %>%
   filter(.metric %in% c("rmse", "rsq")) %>%
   select(-.estimator) %>%
@@ -797,25 +773,23 @@ metrics_nnet <- mlp_tune_nnet %>%
 
 
 # Pick the best by lowest rmse then highest rsq
-best_nnet <- metrics_nnet %>%
+best_nnet = metrics_nnet %>%
   arrange(rmse, desc(rsq)) %>%
   slice_head(n = 1)
 
-best_params_nnet <- best_nnet %>%
+best_params_nnet = best_nnet %>%
   select(hidden_units, penalty)
 
 
-
-
 # 10. Finalize workflow & last_fit
-final_wf_nnet <- finalize_workflow(mlp_wf_nnet, best_params_nnet)
+final_wf_nnet = finalize_workflow(mlp_wf_nnet, best_params_nnet)
 
 
 ```
 
 ```{r}
 set.seed(2053)
-final_res_nnet <- last_fit(final_wf_nnet, split = mlp_split)
+final_res_nnet = last_fit(final_wf_nnet, split = mlp_split)
 ```
 
 ```{r}
@@ -826,7 +800,7 @@ final_res_nnet %>% collect_metrics()
 
 ```{r}
 # Test‐set predictions
-preds_nnet <- final_res_nnet %>% collect_predictions()
+preds_nnet = final_res_nnet %>% collect_predictions()
 ```
 
 
@@ -845,19 +819,14 @@ ggplot(preds_nnet, aes(x = yield_mg_ha, y = .pred)) +
 
 
 ```{r}
-
-
-```
-
-```{r}
 # 13. (Optional) Inspect training-set performance
 # ───────────────────────────────────────────────────────────────────────────────
 # 12. (Optional) Check training‐set performance
-train_fit_nnet <- fit(final_wf_nnet, data = training(mlp_split))
-train_preds_nnet <- predict(train_fit_nnet, new_data = training(mlp_split)) %>%
+train_fit_nnet = fit(final_wf_nnet, data = training(mlp_split))
+train_preds_nnet = predict(train_fit_nnet, new_data = training(mlp_split)) %>%
   bind_cols(training(mlp_split))
 
-train_metrics_nnet <- bind_rows(
+train_metrics_nnet = bind_rows(
   train_preds_nnet %>% rmse(truth = yield_mg_ha, estimate = .pred),
   train_preds_nnet %>% rsq (truth = yield_mg_ha, estimate = .pred)
 )
