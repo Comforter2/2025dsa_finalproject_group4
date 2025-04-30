@@ -183,6 +183,7 @@ ggplot(boxplot_data, aes(x = variable, y = value)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   ggtitle("Boxplots for Numeric Predictors")
 
+
 ```
 
 ```{r predictors visualization}
@@ -215,7 +216,12 @@ chart.Correlation(
 
 ```
 
-#------------------------------------------------------------------------------------------ #Model-1: XGBoost ML workflow #------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------
+
+# Model-1: XGBoost ML workflow 
+
+#------------------------------------------------------------------------------------------
 
 # 1. Pre-processing
 
@@ -766,8 +772,8 @@ beepr::beep()
 
 ```
 
-```{r}
-# Collect metrics
+```{r Collect metrics}
+# 
 metrics_nnet = mlp_tune_nnet %>%
   collect_metrics() %>%
   filter(.metric %in% c("rmse", "rsq")) %>%
@@ -840,29 +846,33 @@ train_metrics_nnet
 
 
 
-
 #------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------
 # Prediction on Test Data
 #------------------------------------------------------------------------------------------
 
-```{r}
+
+
+
+
+```{r loading data}
 #| message: false
 #| warning: false
 #| 
 # Read weather data and compute yearly/site means
-weather_test = read_csv("../data/testing/weather_2024.csv")
+weather_test = read_csv("../data/testing/weather_2024.csv")%>%
+  distinct(year, site, .keep_all = TRUE)
 
 # Read trait data
 trait_test = read_csv("../data/testing/testing_submission.csv")
-
 
 # Join trait with averaged weather
 trait_weather_test = left_join(trait_test, weather_test, by = c("year", "site"))
 
 # New soil variables ("pHom","pk","soilpH^2","om_pct^2","p+k","norm_pk") were created in Excel 
 
-soil_test = read_csv("../data/testing/testing_soil.csv")
+soil_test = read_csv("../data/testing/testing_soil.csv")%>%
+  distinct(year, site, .keep_all = TRUE)
 
 # Join trait-weather with soil data
 tw_soil_test = left_join(trait_weather_test, soil_test, by = c("year", "site"))
@@ -880,8 +890,8 @@ tw_sm_meta_test <- left_join(tw_soil_test, meta_test, by = c("year", "site")) %>
     `om_pct^2`  = as.numeric(`om_pct^2`),
     yield_mg_ha = as.numeric(yield_mg_ha),
     swe_kg_m_2 = as.numeric(swe_kg_m_2)
-  ) %>%
-  filter(!is.na(soilpH))
+  ) #%>%
+  #filter(!is.na(soilpH))
  
 
 # Remove all rows with any missing values
@@ -890,36 +900,55 @@ final_merged_test = tw_sm_meta_test %>%
          -longitude, -latitude, -lon, -lat)
 
 summary(final_merged_test)
-glimpse(final_merged_test)
 ```
 
 
-```{r}
-#site_means = train_data_mlp %>%
-  #semi_join(final_merged_test, by = "site") %>%
-  #group_by(site) %>%
-  #summarise()
-```
-
-
-
+#Using MLP
 ```{r predicting maize yield}
 set.seed(2053)
 
+final_mlp_wf <- finalize_workflow(mlp_wf_nnet, best_params_nnet)
 
-fitted_mlp_test <- fit(final_wf_nnet, data = final_merged_test)
+fitted_mlp <- fit(final_mlp_wf, data = training(mlp_split))
 
-test_yield_prediction = predict(fitted_mlp_test, new_data = final_merged_test)
+#------------------------------------------------------------------------------------------
+# 3. Predict & export
+#------------------------------------------------------------------------------------------
+mlp_predictions <- predict(fitted_mlp, new_data = final_merged_test) %>%
+  bind_cols(final_merged_test %>% select(site)) %>%
+  rename(predicted_yield = .pred)
 
-test_submission = final_merged_test %>%
-  select(site) %>%
-  bind_cols(test_yield_prediction) %>%
-  distinct()
-test_submission
+# Inspect
+head(mlp_predictions)
+summary(mlp_predictions)
   
 ```
+# using XGboost
 
+```{r}
+# 2a. Grab the best hyperparameters (by highest R²)
+best_r2 <- xgb_res %>% 
+  select_best(metric = "rsq")
 
+# 2b. Build & finalize the workflow
+final_xgb_wf <- workflow() %>%
+  add_recipe(ml_recipe) %>%
+  add_model(xgb_spec) %>%
+  finalize_workflow(best_r2)
+
+# 2c. Fit on the *entire* training set
+fitted_xgb <- final_xgb_wf %>% 
+  fit(data = training(ml_split))
+
+#------------------------------------------------------------------------------------------
+# 3. Predict on your test set & export
+#------------------------------------------------------------------------------------------
+xgb_predictions <- predict(fitted_xgb, new_data = final_merged_test) %>%
+  bind_cols(final_merged_test %>% select(site)) %>%
+  rename(predicted_yield = .pred)
+
+unique(glimpse(xgb_predictions))
+```
 
 
 

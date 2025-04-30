@@ -1,1 +1,27 @@
-https://j995vy-akb91318.shinyapps.io/Shiny_APP_Group4_Ashbin-Comfort/
+1. What is the name of the second model type you selected? 
+   - **Multilayer Perceptron (MLP)** using nnet  
+ 
+2. What is the test R2 for xgboost?
+- **XGBoost Test Performance**  
+  - R²: *[0.50]*  
+ 
+3. What is the test RMSE for xgboost?
+ - RMSE: *[5.75]*
+
+
+4. What is the test R2 for selected model?
+- **MLP (nnet) Test Performance**  
+  - R²: *[0.50]*  
+
+5. What is the test RMSE for selected model?
+  - RMSE: *[1.88]*
+
+
+6. Which model did you choose to show results in the dashboard?    
+   - Multilayer Perceptron (MLP) emerged as the top performer and serves as our production model.
+
+
+7. Insert here your GitBub repo URL: https://github.com/Comforter2/2025dsa_finalproject_group4.git
+
+
+8. Insert here your Shinyapp URL:  https://j995vy-akb91318.shinyapps.io/Shiny_APP_Group4_Ashbin-Comfort/
