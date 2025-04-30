@@ -948,9 +948,97 @@ xgb_predictions <- predict(fitted_xgb, new_data = final_merged_test) %>%
   rename(predicted_yield = .pred)
 
 unique(glimpse(xgb_predictions))
+
+
+# 3b. Write to CSV
+write_csv(xgb_predictions, "../data/testing/Predicted_yield_testing.csv")
 ```
 
 
+```{r}
+library(tidyverse)
+library(tidymodels)
+
+#-----------------------------------------------------------------------------------------
+# 1. Read & clean each test piece (explicitly pull in yield as double, then drop it)
+#-----------------------------------------------------------------------------------------
+trait_test <- read_csv(
+  "../data/testing/testing_submission.csv",
+  col_types = cols(
+    site        = col_character(),
+    hybrid      = col_character(),
+    year        = col_double(),
+    yield_mg_ha = col_double()    # read as numeric
+  )
+) %>% 
+  select(-yield_mg_ha)            # we don't use it for prediction
+
+weather_test <- read_csv(
+  "../data/testing/weather_2024.csv",
+  show_col_types = FALSE
+) %>%
+  distinct(year, site, .keep_all = TRUE) %>%
+  group_by(year, site) %>%
+  summarise(across(
+    c(prcp_mm_day, srad_w_m_2, swe_kg_m_2,
+      tmax_deg_c, tmin_deg_c, vp_pa),
+    ~ mean(.x, na.rm = TRUE)
+  ), .groups = "drop")
+
+soil_test <- read_csv(
+  "../data/testing/testing_soil.csv",
+  show_col_types = FALSE
+) %>%
+  distinct(year, site, .keep_all = TRUE)
+
+meta_test <- read_csv(
+  "../data/testing/testing_meta.csv",
+  show_col_types = FALSE
+) %>%
+  select(year, site)
+
+#-----------------------------------------------------------------------------------------
+# 2. Join everything & cast any logicals to numeric
+#-----------------------------------------------------------------------------------------
+final_test_data <- trait_test %>%
+  left_join(weather_test, by = c("year","site")) %>%
+  left_join(soil_test,   by = c("year","site")) %>%
+  left_join(meta_test,   by = c("year","site")) %>%
+  mutate(across(where(is.logical), as.numeric)) %>%  # convert any logical → numeric
+  drop_na() %>%                                      # drop rows with any NA
+  select(-year)                                      # remove columns not in your recipe
+
+# Quick check
+glimpse(final_test_data)
+
+#-----------------------------------------------------------------------------------------
+# 3. Finalize & fit the XGBoost workflow on all training data
+#    (using your best‐R² hyperparameters)
+#-----------------------------------------------------------------------------------------
+best_r2   <- xgb_res %>% select_best(metric = "rsq")
+final_wf  <- workflow() %>%
+               add_recipe(ml_recipe) %>%
+               add_model(xgb_spec) %>%
+               finalize_workflow(best_r2)
+
+fitted_xgb <- fit(final_wf, data = training(ml_split))
+
+#-----------------------------------------------------------------------------------------
+# 4. Predict on the cleaned, numeric test set & export
+#-----------------------------------------------------------------------------------------
+xgb_predictions <- predict(fitted_xgb, new_data = final_test_data) %>%
+  bind_cols(final_test_data %>% select(site)) %>%
+  rename(predicted_yield = .pred)
+
+# Inspect
+head(xgb_predictions)
+summary(xgb_predictions)
+
+# Write to CSV
+#write_csv(xgb_predictions, "../data/testing/Predicted_yield_testing.csv")
+
+
+```
 
 
 
